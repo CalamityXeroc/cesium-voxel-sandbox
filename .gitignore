@@ -1,0 +1,11 @@
+node_modules/
+dist/
+public/cesium/
+.env.local
+.env.*.local
+*.local
+.DS_Store
+.vscode/
+.idea/
+*.log
+npm-debug.log*
