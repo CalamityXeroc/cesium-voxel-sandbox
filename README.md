@@ -5,6 +5,8 @@
 
 > A Minecraft-style voxel sandbox built on CesiumJS.
 
+🔗 **在线演示**：<https://www.bst-note.top/voxel/>（也嵌入在个人网站的 [/sandbox](https://www.bst-note.top/sandbox) 页面）
+
 ## 特性
 
 - **体素世界**：256 × 256 × 256，`Uint8Array` 数据层 + 面剔除 meshing + 环境光遮蔽（AO）
