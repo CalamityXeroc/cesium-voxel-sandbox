@@ -1136,19 +1136,28 @@ function onWheel(e) {
   if (e.deltaY > 0) selectedSlot.value = (selectedSlot.value + 1) % N
   else selectedSlot.value = (selectedSlot.value + N - 1) % N
 }
-function onMouseDown(e) {
+// 注意:必须用 pointer 事件 —— Cesium 在 pointerdown 上 preventDefault 会抑制 mousedown 的派发
+function requestLock() {
+  if (viewer && document.pointerLockElement !== viewer.canvas) {
+    try { viewer.canvas.requestPointerLock() } catch (err) {}
+  }
+}
+function onPointerDown(e) {
   if (!viewer || e.target !== viewer.canvas) return // 只响应画布本身
   e.preventDefault()
   ensureAudio() // 用户手势后启用音频
-  if (document.pointerLockElement !== viewer.canvas) {
-    try { viewer.canvas.requestPointerLock() } catch (err) {}
-  }
+  requestLock()
   if (selectedSlot.value === BALL_SLOT) { throwBall(); return }
   if (e.button === 0) startBreaking()
   else if (e.button === 2) placeAtClick()
 }
-function onMouseUp(e) {
+function onPointerUp(e) {
   if (e.button === 0) stopBreaking()
+}
+function onCanvasClick(e) {
+  // 兜底:pointerdown 时的锁定请求可能被浏览器推迟到鼠标释放后
+  if (!viewer || e.target !== viewer.canvas) return
+  requestLock()
 }
 function onCanvasContext(e) {
   if (!viewer || e.target !== viewer.canvas) return
@@ -1311,7 +1320,7 @@ onMounted(async () => {
   // 先注册操控事件(就算后续场景出错也能操作)
   window.addEventListener('keydown', onKeyDown); window.addEventListener('keyup', onKeyUp)
   window.addEventListener('mousemove', onMouseMove); window.addEventListener('wheel', onWheel)
-  window.addEventListener('mousedown', onMouseDown); window.addEventListener('mouseup', onMouseUp); window.addEventListener('contextmenu', onCanvasContext)
+  window.addEventListener('pointerdown', onPointerDown); window.addEventListener('pointerup', onPointerUp); window.addEventListener('click', onCanvasClick); window.addEventListener('contextmenu', onCanvasContext)
   document.addEventListener('pointerlockchange', onPointerLockChange)
   document.addEventListener('pointerlockerror', onPointerLockError)
   buildCharacter(); setCamMode(camMode.value); initInteractionVisuals(); buildWorld(); initChunkRendering(); buildAllChunks(); buildCelestial(); buildClouds()
@@ -1337,7 +1346,7 @@ onBeforeUnmount(() => {
   if (document.pointerLockElement) document.exitPointerLock()
   window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('wheel', onWheel)
-  window.removeEventListener('mousedown', onMouseDown); window.removeEventListener('mouseup', onMouseUp); window.removeEventListener('contextmenu', onCanvasContext)
+  window.removeEventListener('pointerdown', onPointerDown); window.removeEventListener('pointerup', onPointerUp); window.removeEventListener('click', onCanvasClick); window.removeEventListener('contextmenu', onCanvasContext)
   if (viewer && viewer.destroy) viewer.destroy(); viewer = null
 })
 
