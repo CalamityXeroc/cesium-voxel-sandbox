@@ -96,7 +96,16 @@
         </section>
 
         <section class="panel">
-          <div class="ptitle">✨ 后处理</div>
+          <div class="ptitle">✨ 画质 / 后处理</div>
+          <div class="ctrl">
+            <span class="label">画质(内部 {{ renderSize || '—' }})</span>
+            <select :value="qualityMode" @change="onQuality($event.target.value)">
+              <option value="auto">自动</option>
+              <option value="high">高(原生)</option>
+              <option value="medium">中</option>
+              <option value="low">低(流畅)</option>
+            </select>
+          </div>
           <div class="ctrl">
             <span class="label">Bloom 泛光</span>
             <label class="switch"><input type="checkbox" :checked="bloomOn" @change="setBloom($event.target.checked)" /><span class="slider"></span></label>
@@ -151,6 +160,13 @@ const speed = ref(0)
 const entities = ref(0)
 const headingText = ref('N')
 const fps = ref(0)
+const qualityMode = ref('auto')     // auto | high | medium | low
+const renderSize = ref('')          // 当前内部渲染分辨率(供面板显示)
+let realFps = 0                     // 真实渲染帧率(来自 Cesium 实际出帧计数)
+let lastFrameNum = 0, lastFrameT = 0
+let adaptFactor = 1                 // 自适应系数(0.4~1), 仅在 auto 模式下生效: 默认原生, 撑不住才降
+let adaptCooldown = 0
+const QUALITY_PRESET = { high: { msaa: 4, hdr: true }, medium: { msaa: 2, hdr: true }, low: { msaa: 1, hdr: false } }
 const selectedSlot = ref(0)
 const shadowOn = ref(true)
 const neonOn = ref(false)
@@ -1592,6 +1608,48 @@ function updateCamera() {
   }
 }
 
+/* ============ 画质自适应 ============ */
+// 默认按原生分辨率渲染; 若实测帧率偏低(弱 GPU / 大窗口), 自动降内部渲染分辨率, 帧率回落后再逐步升回。
+// 实测参考: 1902×944 窗口下原生 MSAA4+HDR 在 RTX 4060 上约 126fps, 降到 0.85 倍后可达 240fps。
+function applyQuality() {
+  if (!viewer) return
+  const s = viewer.scene
+  const preset = QUALITY_PRESET[qualityMode.value === 'auto' ? 'high' : qualityMode.value]
+  let scale = adaptFactor
+  if (qualityMode.value === 'high') scale = 1
+  else if (qualityMode.value === 'medium') scale = 0.8
+  else if (qualityMode.value === 'low') scale = 0.6
+  scale = clamp(scale, 0.4, 1)
+  if (Math.abs(viewer.resolutionScale - scale) > 0.02) viewer.resolutionScale = scale
+  if (s.msaaSamples !== preset.msaa) s.msaaSamples = preset.msaa
+  if (s.highDynamicRange !== preset.hdr) s.highDynamicRange = preset.hdr
+  const dpr = window.devicePixelRatio || 1
+  renderSize.value = Math.round(viewer.canvas.clientWidth * dpr * scale) + '×' + Math.round(viewer.canvas.clientHeight * dpr * scale)
+}
+// 自适应升降(带滞后与冷却, 避免频繁重建 framebuffer 造成卡顿)
+function updateAutoQuality() {
+  if (qualityMode.value !== 'auto' || !viewer) return
+  if (adaptCooldown > 0) { adaptCooldown--; return }
+  if (realFps > 0 && realFps < 45 && adaptFactor > 0.4) {
+    adaptFactor = Math.max(0.4, adaptFactor * 0.8); applyQuality(); adaptCooldown = 4
+  } else if (realFps > 100 && adaptFactor < 0.999) {
+    adaptFactor = Math.min(1, adaptFactor * 1.08); applyQuality(); adaptCooldown = 6
+  }
+}
+function onQuality(v) { qualityMode.value = v; adaptFactor = 1; applyQuality() }
+
+/* ============ 键盘焦点 ============ */
+// 嵌入 iframe 时点击画布只会拿到指针锁定, 不会把键盘焦点移进 iframe, 导致所有按键失效。
+// 这里在交互时主动聚焦画布, 保证键盘事件到达本页。
+function focusCanvas() {
+  if (!viewer) return
+  const c = viewer.canvas
+  if (c.tabIndex < 0) c.tabIndex = -1
+  if (document.activeElement !== c) {
+    try { c.focus({ preventScroll: true }) } catch (e) { c.focus() }
+  }
+}
+
 /* ============ 主循环 ============ */
 function tick() {
   window.__ticks = (window.__ticks || 0) + 1
@@ -1600,10 +1658,15 @@ function tick() {
   lastTick = now
   updatePlayer(dt); updateBalls(dt); updateCamera(); updateClouds(dt); updateLightUniforms(); updateInteraction(dt); updateDebris(dt)
   frameCount++
-  if (!fpsWindow) { fpsWindow = now; lastHudT = now }
+  // 真实渲染帧率: Cesium 实际出帧数(而不是 tick 回调次数 —— 后者在主线程空转时也会显示 60)
+  const frameNum = viewer ? viewer.scene.frameState.frameNumber : 0
+  if (!lastFrameT) { lastFrameT = now; lastFrameNum = frameNum }
   if (now - fpsWindow >= 500) {
-    fps.value = Math.round(frameCount * 1000 / (now - fpsWindow))
+    const fdt = (now - lastFrameT) / 1000
+    if (fdt > 0) { realFps = (frameNum - lastFrameNum) / fdt; fps.value = Math.round(realFps) }
+    lastFrameNum = frameNum; lastFrameT = now
     frameCount = 0; fpsWindow = now
+    updateAutoQuality()
     const hdt = (now - lastHudT) / 1000
     if (hdt > 0 && hdt < 2) speed.value = Math.hypot(player.x - lastHx, player.z - lastHz) / hdt
     lastHx = player.x; lastHz = player.z; lastHudT = now
@@ -1710,6 +1773,7 @@ function requestLock() {
 }
 function onPointerDown(e) {
   if (!viewer || invOpen.value || e.target !== viewer.canvas) return // 只响应画布本身(背包打开时不交互)
+  focusCanvas()   // iframe 嵌入时: 保证键盘焦点进入本页, 否则所有按键失效
   e.preventDefault()
   ensureAudio() // 用户手势后启用音频
   requestLock()
@@ -1877,6 +1941,7 @@ onMounted(async () => {
   viewer.scene.requestRenderMode = false
   viewer.clock.clockRange = Cesium.ClockRange.UNBOUNDED // 允许自由设定时钟(否则 currentTime 被钳制在默认范围)
   try { viewer.scene.msaaSamples = 4 } catch (e2) {}
+  applyQuality()   // 按窗口像素量自适应内部分辨率(大画布下 MSAA4+HDR 会大幅降速)
   try { viewer.camera.frustum.fov = Cesium.Math.toRadians(70) } catch (e3) {} // MC 风格 FOV
   viewer.scene.highDynamicRange = true
   viewer.scene.postProcessStages.tonemapper = Cesium.Tonemapper.PBR_NEUTRAL
@@ -1885,7 +1950,7 @@ onMounted(async () => {
   viewer.scene.postProcessStages.exposure = exposure.value
   viewer.camera.setView({ destination: wpos(0, surfaceYAt(0, 130) + 26, 130), orientation: { heading: 0.6, pitch: -0.38, roll: 0 } })
   // 先注册操控事件(就算后续场景出错也能操作)
-  window.addEventListener('keydown', onKeyDown); window.addEventListener('keyup', onKeyUp)
+  window.addEventListener('keydown', onKeyDown); window.addEventListener('keyup', onKeyUp); window.addEventListener('resize', applyQuality)
   window.addEventListener('mousemove', onMouseMove); window.addEventListener('wheel', onWheel)
   window.addEventListener('pointerdown', onPointerDown); window.addEventListener('pointerup', onPointerUp); window.addEventListener('click', onCanvasClick); window.addEventListener('contextmenu', onCanvasContext)
   document.addEventListener('pointerlockchange', onPointerLockChange)
@@ -1912,7 +1977,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerlockchange', onPointerLockChange)
   document.removeEventListener('pointerlockerror', onPointerLockError)
   if (document.pointerLockElement) document.exitPointerLock()
-  window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp)
+  window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); window.removeEventListener('resize', applyQuality)
   window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('wheel', onWheel)
   window.removeEventListener('pointerdown', onPointerDown); window.removeEventListener('pointerup', onPointerUp); window.removeEventListener('click', onCanvasClick); window.removeEventListener('contextmenu', onCanvasContext)
   if (viewer && viewer.destroy) viewer.destroy(); viewer = null
