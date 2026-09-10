@@ -332,24 +332,21 @@ function fbm3(x, y, z, oct, freq, gain, lac) {
   return sum / norm
 }
 
-/* ---- 地表高度:大陆度 + 侵蚀 + 山峰谷地 + 山脊线 ---- */
+/* ---- 地表高度:大陆度 + 缓丘(平坦化: 大尺度缓坡,实际相邻高差约 1.3 格/8格) ---- */
 const BASE_Y = 64
 function surfaceYAt(x, z) {
-  const cont = fbm2(x, z, 4, 1 / 190, 0.5, 2)                 // 大陆度(大尺度)
-  const ero = fbm2(x + 1000, z - 1000, 3, 1 / 95, 0.5, 2)     // 侵蚀(平坦度)
-  const pv = fbm2(x - 500, z + 500, 3, 1 / 52, 0.5, 2)        // 山峰谷地
-  const ridgeN = 1 - Math.abs(fbm2(x + 800, z + 800, 3, 1 / 68, 0.5, 2)) // 山脊线
-  let h = BASE_Y + cont * 24 + pv * 16
-  h += ridgeN * ridgeN * 44 * Math.max(0, 1 - (ero * 0.5 + 0.5) * 1.15)
+  const cont = fbm2(x, z, 2, 1 / 300, 0.5, 2)                 // 大陆度(大尺度缓坡)
+  const pv = fbm2(x - 500, z + 500, 2, 1 / 120, 0.5, 2)       // 缓丘
+  const h = BASE_Y + cont * 20 + pv * 6
   return clamp(Math.round(h), 26, 150)
 }
 function groundYAt(x, z) { return surfaceYAt(x, z) }
 
-/* ---- 3D 密度:决定实/空,产生悬崖与洞穴(MC 式) ---- */
+/* ---- 3D 密度:决定实/空(低振幅低倍频,地表平整) ---- */
 function densityAt(x, y, z, sy) {
   const base = (sy - y) / 9
-  const n = fbm3(x, y * 2.2, z, 3, 1 / 42, 0.5, 2)
-  return base + n * 1.9
+  const n = fbm3(x, y * 1.5, z, 2, 1 / 90, 0.5, 2)
+  return base + n * 0.5
 }
 
 /* ---- 洞穴:意面隧道(双噪声近零) + 奶酪洞厅(单噪声阈值) ---- */
