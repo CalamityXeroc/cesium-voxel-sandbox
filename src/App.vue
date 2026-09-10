@@ -601,7 +601,9 @@ function initChunkRendering() {
 
 /* 每帧更新点光源眼空间位置(取离相机最近的 MAX_LIGHTS 个萤石) */
 const scratchLightWorld = new Cesium.Cartesian3()
-const scratchLightEC = new Cesium.Cartesian3()
+const scratchLightECs = Array.from({ length: MAX_LIGHTS }, () => new Cesium.Cartesian3())   // 每槽位独立,避免 uniform 引用被覆盖
+const scratchLightColors = Array.from({ length: MAX_LIGHTS }, () => new Cesium.Cartesian3())
+const LIGHT_TINT = new Cesium.Cartesian3(1, 0.98, 0.92)   // 微暖白
 function updateLightUniforms() {
   if (!viewer || !lightUniformSets.length) return
   const cam = viewer.camera
@@ -625,8 +627,9 @@ function updateLightUniforms() {
     let lp = Cesium.Cartesian3.ZERO, lc = Cesium.Cartesian3.ZERO
     if (L) {
       Cesium.Matrix4.multiplyByPoint(WORLD_MATRIX, new Cesium.Cartesian3(L.x + 0.5, L.z + 0.5, L.y + 0.5), scratchLightWorld)
-      lp = Cesium.Matrix4.multiplyByPoint(viewMatrix, scratchLightWorld, scratchLightEC)
-      lc = new Cesium.Cartesian3(intensity, intensity * 0.98, intensity * 0.92) // 微暖白
+      // 每个槽位必须用独立 scratch: 共用会把之前槽位的 uniform 引用覆盖成最后一块的位置
+      lp = Cesium.Matrix4.multiplyByPoint(viewMatrix, scratchLightWorld, scratchLightECs[i])
+      lc = Cesium.Cartesian3.multiplyByScalar(LIGHT_TINT, intensity, scratchLightColors[i]) // 微暖白
     }
     for (const u of lightUniformSets) {
       u['u_lp' + i] = lp
