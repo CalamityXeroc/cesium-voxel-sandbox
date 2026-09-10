@@ -23,7 +23,7 @@
     <div class="help">
       <div><b>W A S D</b> 移动</div>
       <div><b>空格</b> 跳跃</div>
-      <div><b>左键</b> 挖掘</div>
+      <div><b>左键</b> 破坏(可连挖)</div>
       <div><b>右键</b> 放置</div>
       <div><b>1-9</b> 选物品</div>
       <div><b>滚轮</b> 切换</div>
@@ -901,28 +901,11 @@ function removeGlowHalo(x, y, z) {
   }
 }
 
-/* ============ 选中高亮 & 破坏进度 ============ */
-let highlightEntity = null, crackEntity = null
-let breakAlpha = 0
-let breaking = null            // {x,y,z,t} 正在破坏的方块
-const BREAK_TIME = 0.4         // 破坏耗时(秒)
-
-// 程序化裂纹纹理(黑线,透明背景)
-function makeCrackTex() {
-  const cv = document.createElement('canvas'); cv.width = cv.height = 64
-  const g = cv.getContext('2d')
-  g.clearRect(0, 0, 64, 64)
-  g.strokeStyle = 'rgba(0,0,0,0.9)'; g.lineCap = 'round'
-  let seed = 12
-  const rnd = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647 }
-  for (let i = 0; i < 5; i++) {
-    let x = 8 + rnd() * 48, y = 8 + rnd() * 48
-    g.beginPath(); g.lineWidth = 1 + rnd() * 1.2; g.moveTo(x, y)
-    for (let s = 0; s < 4; s++) { x += (rnd() - 0.5) * 26; y += (rnd() - 0.5) * 26; g.lineTo(x, y) }
-    g.stroke()
-  }
-  return cv
-}
+/* ============ 选中高亮 & 连续破坏(创造模式:一击即碎,按住连挖) ============ */
+let highlightEntity = null
+let attacking = false          // 左键是否按住
+let attackCooldown = 0         // 连续破坏间隔计时(秒)
+const ATTACK_INTERVAL = 0.22   // 连挖间隔(秒, 约 MC 创造模式 5 ticks)
 
 function initInteractionVisuals() {
   highlightEntity = viewer.entities.add({
@@ -933,28 +916,16 @@ function initInteractionVisuals() {
       outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
     },
   })
-  crackEntity = viewer.entities.add({
-    show: false,
-    box: {
-      dimensions: new Cesium.Cartesian3(1.004, 1.004, 1.004),
-      material: new Cesium.ImageMaterialProperty({
-        image: makeCrackTex(),
-        transparent: true,
-        color: new Cesium.CallbackProperty(() => Cesium.Color.WHITE.withAlpha(breakAlpha), false),
-      }),
-    },
-  })
 }
-function startBreaking() {
+// 按下左键:立即破坏准星方块(一击即碎),并开始连续破坏计时
+function attackStart() {
+  attacking = true
+  attackCooldown = ATTACK_INTERVAL
   const ray = raycastVoxel(MAX_REACH)
-  if (!ray) return
-  breaking = { x: ray.hit[0], y: ray.hit[1], z: ray.hit[2], t: 0 }
+  if (ray) destroyBlockAt(ray.hit[0], ray.hit[1], ray.hit[2])
 }
-function stopBreaking() {
-  breaking = null; breakAlpha = 0
-  if (crackEntity) crackEntity.show = false
-}
-// 每帧:更新高亮框位置与破坏进度
+function attackStop() { attacking = false; attackCooldown = 0 }
+// 每帧:更新高亮框位置 + 按住左键连续破坏
 function updateInteraction(dt) {
   if (!viewer || !highlightEntity) return
   const ray = raycastVoxel(MAX_REACH)
@@ -964,21 +935,11 @@ function updateInteraction(dt) {
   } else {
     highlightEntity.show = false
   }
-  if (!breaking) return
-  // 准星离开原方块 → 进度重置
-  if (!ray || ray.hit[0] !== breaking.x || ray.hit[1] !== breaking.y || ray.hit[2] !== breaking.z) {
-    stopBreaking(); return
-  }
-  breaking.t += dt
-  if (breaking.t >= BREAK_TIME) {
-    const { x, y, z } = breaking
-    stopBreaking()
-    destroyBlockAt(x, y, z)
-    return
-  }
-  breakAlpha = breaking.t / BREAK_TIME
-  crackEntity.show = true
-  crackEntity.position = wpos(breaking.x + 0.5, breaking.y + 0.5, breaking.z + 0.5)
+  if (!attacking) return
+  attackCooldown -= dt
+  if (attackCooldown > 0) return
+  attackCooldown = ATTACK_INTERVAL
+  if (ray) destroyBlockAt(ray.hit[0], ray.hit[1], ray.hit[2])
 }
 
 const MAX_REACH = 5.5
@@ -1148,11 +1109,11 @@ function onPointerDown(e) {
   ensureAudio() // 用户手势后启用音频
   requestLock()
   if (selectedSlot.value === BALL_SLOT) { throwBall(); return }
-  if (e.button === 0) startBreaking()
+  if (e.button === 0) attackStart()
   else if (e.button === 2) placeAtClick()
 }
 function onPointerUp(e) {
-  if (e.button === 0) stopBreaking()
+  if (e.button === 0) attackStop()
 }
 function onCanvasClick(e) {
   // 兜底:pointerdown 时的锁定请求可能被浏览器推迟到鼠标释放后
@@ -1332,7 +1293,7 @@ onMounted(async () => {
   window.__intervalId = setInterval(tick, 16)
   // 自动昼夜循环
   window.__dayCycle = setInterval(() => { sunHour.value = (sunHour.value + 0.15) % 24; applySun() }, 3000)
-  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, startBreaking, stopBreaking, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, get breaking() { return breaking }, get breakAlpha() { return breakAlpha } }
+  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, get attacking() { return attacking } }
   window.__Cesium = Cesium
   } catch(e) { window.__mountErr = String(e.stack || e.message || e); console.error('[Engine] mount error:', e) }
 })
