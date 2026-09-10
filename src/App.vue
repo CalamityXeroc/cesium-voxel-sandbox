@@ -877,12 +877,13 @@ function addGlowHalo(x, y, z) {
   const key = x + ',' + y + ',' + z
   if (glowLights.has(key)) return
   glowLights.set(key, { x, y, z })
-  // 仅萤石本体上的小光斑(2m),真正的照明由体素着色器的点光源完成
+  // 仅萤石本体上的小光斑,真正的照明由体素着色器的点光源完成
+  // 注:本项目场景中 sizeInMeters:true 的 billboard 不渲染(实测),光斑用像素尺寸
   const e = viewer.entities.add({
     position: wpos(x + 0.5, y + 0.5, z + 0.5),
     billboard: {
       image: getGlowCoreTex(),
-      width: 2.2, height: 2.2, sizeInMeters: true,
+      width: 30, height: 30,
       color: Cesium.Color.WHITE,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
       blending: Cesium.BlendingState.ADDITIVE_BLEND,
@@ -942,16 +943,12 @@ function updateInteraction(dt) {
   if (ray) destroyBlockAt(ray.hit[0], ray.hit[1], ray.hit[2])
 }
 
-/* ============ 破坏碎屑粒子(MC 风格: 方块纹理小片段爆开) ============ */
-let debrisCollection = null
+/* ============ 破坏碎屑粒子(MC 风格: 方块纹理小片段爆开,Entity 实现) ============ */
+// 注:不用 scene.primitives 的 BillboardCollection —— 实测米制尺寸在该方式下不渲染;Entity billboard(同日月/萤石光斑)已验证可见
 const debrisList = []
 const debrisTexCache = new Map()   // 方块id -> 4 个随机 16x16 纹理片段
 const DEBRIS_COUNT = 16
 
-function initDebris() {
-  debrisCollection = new Cesium.BillboardCollection()
-  viewer.scene.primitives.add(debrisCollection)
-}
 // 从图集裁剪该方块的随机小片段作为碎屑纹理
 function debrisTex(id) {
   let arr = debrisTexCache.get(id)
@@ -972,26 +969,24 @@ function debrisTex(id) {
   return arr.length ? arr[(Math.random() * arr.length) | 0] : null
 }
 function spawnDebris(x, y, z, id) {
-  if (!debrisCollection) return
   for (let i = 0; i < DEBRIS_COUNT; i++) {
     const tex = debrisTex(id)
     if (!tex) break
-    const dx = x + 0.15 + Math.random() * 0.7
-    const dy = y + 0.15 + Math.random() * 0.7
-    const dz = z + 0.15 + Math.random() * 0.7
-    const b = debrisCollection.add({
-      position: wpos(dx, dy, dz),
-      image: tex,
-      width: 0.13, height: 0.13, sizeInMeters: true,
-    })
-    debrisList.push({
-      b, x: dx, y: dy, z: dz,
+    const d = {
+      x: x + 0.15 + Math.random() * 0.7,
+      y: y + 0.15 + Math.random() * 0.7,
+      z: z + 0.15 + Math.random() * 0.7,
       vx: (Math.random() - 0.5) * 3.4,
       vy: 1.6 + Math.random() * 2.4,
       vz: (Math.random() - 0.5) * 3.4,
       life: 0.55 + Math.random() * 0.45,
-      size: 0.09 + Math.random() * 0.07,
+      size: 0.11 + Math.random() * 0.09,
+    }
+    d.e = viewer.entities.add({
+      position: new Cesium.CallbackProperty(() => wpos(d.x, d.y, d.z), false),
+      billboard: { image: tex, width: 14, height: 14 },   // 像素尺寸;每帧按距离换算米制大小
     })
+    debrisList.push(d)
   }
 }
 function updateDebris(dt) {
@@ -999,7 +994,7 @@ function updateDebris(dt) {
   for (let i = debrisList.length - 1; i >= 0; i--) {
     const d = debrisList[i]
     d.life -= dt
-    if (d.life <= 0) { debrisCollection.remove(d.b); debrisList.splice(i, 1); continue }
+    if (d.life <= 0) { viewer.entities.remove(d.e); debrisList.splice(i, 1); continue }
     d.vy += GRAVITY * dt
     const nx = d.x + d.vx * dt, ny = d.y + d.vy * dt, nz = d.z + d.vz * dt
     if (voxelAt(Math.floor(nx), Math.floor(ny), Math.floor(nz))) {
@@ -1009,9 +1004,12 @@ function updateDebris(dt) {
       d.x = nx; d.y = ny; d.z = nz
     }
     const fade = Math.min(1, d.life / 0.3)   // 最后 0.3s 缩小消失
-    const s = d.size * (0.45 + 0.55 * fade)
-    d.b.width = s; d.b.height = s
-    d.b.position = wpos(d.x, d.y, d.z)
+    // 像素尺寸 = 米制大小 × 投影换算(FOV 70°, 视口高 621 → 常数 443)
+    const pos = wpos(d.x, d.y, d.z)
+    const dist = Cesium.Cartesian3.distance(pos, viewer.camera.positionWC)
+    const px = d.size * 443 / Math.max(dist, 0.6) * (0.45 + 0.55 * fade)
+    d.e.billboard.width = px
+    d.e.billboard.height = px
   }
 }
 
@@ -1358,7 +1356,7 @@ onMounted(async () => {
   window.addEventListener('pointerdown', onPointerDown); window.addEventListener('pointerup', onPointerUp); window.addEventListener('click', onCanvasClick); window.addEventListener('contextmenu', onCanvasContext)
   document.addEventListener('pointerlockchange', onPointerLockChange)
   document.addEventListener('pointerlockerror', onPointerLockError)
-  buildCharacter(); setCamMode(camMode.value); initInteractionVisuals(); initDebris(); buildWorld(); initChunkRendering(); buildAllChunks(); buildCelestial(); buildClouds()
+  buildCharacter(); setCamMode(camMode.value); initInteractionVisuals(); buildWorld(); initChunkRendering(); buildAllChunks(); buildCelestial(); buildClouds()
   // 出生点:放到地表(否则初始 y 会埋在基岩附近的地底)
   player.x = 0; player.z = 0; player.y = voxelGroundY(0, 0) + 0.2; player.vy = 0; player.yaw = -1.5 // 朝西(开阔谷地)
   applySun() // 初始化光照与天空颜色(与 sunHour 一致)
@@ -1367,7 +1365,7 @@ onMounted(async () => {
   window.__intervalId = setInterval(tick, 16)
   // 自动昼夜循环
   window.__dayCycle = setInterval(() => { sunHour.value = (sunHour.value + 0.15) % 24; applySun() }, 3000)
-  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, get attacking() { return attacking } }
+  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, get attacking() { return attacking } }
   window.__Cesium = Cesium
   } catch(e) { window.__mountErr = String(e.stack || e.message || e); console.error('[Engine] mount error:', e) }
 })
