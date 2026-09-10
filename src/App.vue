@@ -905,21 +905,130 @@ function removeGlowHalo(x, y, z) {
   }
 }
 
-/* ============ 选中高亮 & 连续破坏(创造模式:一击即碎,按住连挖) ============ */
-let highlightEntity = null
+/* ============ 选中高亮(MC 风格线框) & 连续破坏 ============ */
+// 实测: PolylineCollection / LINES / Entity box 在本场景均不渲染;
+// 唯一可靠的渲染路径是体素 chunk 同构管线(TRIANGLES + Image/Color material + POSITION_NORMAL_AND_ST)。
+// 故线框 = 12 条细长盒子(截面 0.024m)三角化 + 与 chunk 相同的 Appearance 结构,& 目标变化时重建(微秒级)。
+let hlPrimitive = null, hlAppearance = null
+let hlKey = null   // 当前高亮的方块 key(变化才重建)
+
+const HL_VS = `
+in vec3 position3DHigh;
+in vec3 position3DLow;
+in vec3 normal;
+in vec2 st;
+in float batchId;
+out vec3 v_positionEC;
+out vec3 v_normalEC;
+out vec2 v_st;
+void main()
+{
+    vec4 p = czm_computePosition();
+    v_positionEC = (czm_modelViewRelativeToEye * p).xyz;
+    v_normalEC = czm_normal * normal;
+    v_st = st;
+    gl_Position = czm_modelViewProjectionRelativeToEye * p;
+}
+`
+const HL_FS = `
+in vec3 v_positionEC;
+in vec3 v_normalEC;
+in vec2 v_st;
+void main()
+{
+    czm_materialInput materialInput;
+    materialInput.normalEC = normalize(v_normalEC);
+    materialInput.positionToEyeEC = -v_positionEC;
+    materialInput.st = v_st;
+    czm_material material = czm_getMaterial(materialInput);
+    out_FragColor = vec4(material.diffuse, material.alpha);
+}
+`
+
+// 线框 geometry: 12 条边各一个细长盒子(截面 0.024m),顶点烘到 ECEF,带 normal/st(与 chunk 同格式)
+function buildHLGeometry(hit) {
+  const [hx, hy, hz] = hit
+  const e = 0.004          // 外扩避免与方块面深度抖动
+  const t2 = 0.012         // 线半厚(总粗 0.024m)
+  const pos = [], nor = [], sts = [], idx = []
+  const box = (x0, y0, z0, x1, y1, z1) => {
+    const c = [
+      [x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
+      [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],
+    ]
+    const faces = [[0,3,7,4],[1,5,6,2],[0,4,5,1],[3,2,6,7],[0,1,5,4],[3,7,6,2]]   // 6 面
+    let base = pos.length / 3
+    for (const f of faces) {
+      for (const vi of f) {
+        const q = c[vi]
+        const w = wpos(hx + q[0], hy + q[1], hz + q[2])
+        pos.push(w.x, w.y, w.z)
+        nor.push(0, 0, 1)
+        sts.push(0, 0)
+      }
+      idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
+      base += 4
+    }
+  }
+  // 底面 4 条(X/Z 向) + 顶面 4 条 + 竖边 4 条
+  for (const y of [0, 1]) for (const z of [0, 1]) box(-e, y - t2, z - t2, 1 + e, y + t2, z + t2)
+  for (const x of [0, 1]) for (const z of [0, 1]) box(x - t2, -e, z - t2, x + t2, 1 + e, z + t2)
+  for (const x of [0, 1]) for (const y of [0, 1]) box(x - t2, y - t2, -e, x + t2, y + t2, 1 + e)
+  return new Cesium.Geometry({
+    attributes: {
+      position: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.DOUBLE, componentsPerAttribute: 3, values: pos }),
+      normal: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.FLOAT, componentsPerAttribute: 3, values: nor }),
+      st: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.FLOAT, componentsPerAttribute: 2, values: sts }),
+    },
+    indices: new Uint32Array(idx),
+    primitiveType: Cesium.PrimitiveType.TRIANGLES,
+    boundingSphere: Cesium.BoundingSphere.fromVertices(pos),
+  })
+}
+
+function initHighlight() {
+  hlAppearance = new Cesium.Appearance({
+    material: Cesium.Material.fromType('Color', { color: Cesium.Color.WHITE.withAlpha(0.85) }),
+    vertexShaderSource: HL_VS,
+    fragmentShaderSource: HL_FS,
+    vertexFormat: Cesium.VertexFormat.POSITION_NORMAL_AND_ST,   // 与 chunk 同构
+    renderState: { depthTest: { enabled: true }, cull: { enabled: false } },   // 双面:细长盒各面朝向不一
+    translucent: true,
+    closed: false,
+  })
+  hlPrimitive = new Cesium.Primitive({
+    geometryInstances: new Cesium.GeometryInstance({ geometry: buildHLGeometry([0, -10, 0]) }),
+    appearance: hlAppearance,
+    asynchronous: false,
+  })
+  hlPrimitive.show = false
+  viewer.scene.primitives.add(hlPrimitive)
+}
+// 每帧: 把线框套到准星指向的方块上;无目标则隐藏(仅目标变化时重建,微秒级)
+function updateHighlight(hit) {
+  if (!hlPrimitive) return
+  if (!hit) {
+    if (hlPrimitive.show) hlPrimitive.show = false
+    return
+  }
+  hlPrimitive.show = true
+  const key = hit.join(',')
+  if (key === hlKey) return
+  hlKey = key
+  viewer.scene.primitives.remove(hlPrimitive)
+  hlPrimitive = new Cesium.Primitive({
+    geometryInstances: new Cesium.GeometryInstance({ geometry: buildHLGeometry(hit) }),
+    appearance: hlAppearance,
+    asynchronous: false,
+  })
+  viewer.scene.primitives.add(hlPrimitive)
+}
 let attacking = false          // 左键是否按住
 let attackCooldown = 0         // 连续破坏间隔计时(秒)
 const ATTACK_INTERVAL = 0.22   // 连挖间隔(秒, 约 MC 创造模式 5 ticks)
 
 function initInteractionVisuals() {
-  highlightEntity = viewer.entities.add({
-    show: false,
-    box: {
-      dimensions: new Cesium.Cartesian3(1.002, 1.002, 1.002),
-      fill: false, outline: true,
-      outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
-    },
-  })
+  initHighlight()
 }
 // 按下左键:立即破坏准星方块(一击即碎),并开始连续破坏计时
 function attackStart() {
@@ -931,14 +1040,9 @@ function attackStart() {
 function attackStop() { attacking = false; attackCooldown = 0 }
 // 每帧:更新高亮框位置 + 按住左键连续破坏
 function updateInteraction(dt) {
-  if (!viewer || !highlightEntity) return
+  if (!viewer || !hlPrimitive) return
   const ray = raycastVoxel(MAX_REACH)
-  if (ray) {
-    highlightEntity.show = true
-    highlightEntity.position = wpos(ray.hit[0] + 0.5, ray.hit[1] + 0.5, ray.hit[2] + 0.5)
-  } else {
-    highlightEntity.show = false
-  }
+  updateHighlight(ray ? ray.hit : null)
   if (!attacking) return
   attackCooldown -= dt
   if (attackCooldown > 0) return
@@ -1368,7 +1472,7 @@ onMounted(async () => {
   window.__intervalId = setInterval(tick, 16)
   // 自动昼夜循环
   window.__dayCycle = setInterval(() => { sunHour.value = (sunHour.value + 0.15) % 24; applySun() }, 3000)
-  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, get attacking() { return attacking } }
+  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, sunHour, get attacking() { return attacking }, get hlPrimitive() { return hlPrimitive } }
   window.__Cesium = Cesium
   } catch(e) { window.__mountErr = String(e.stack || e.message || e); console.error('[Engine] mount error:', e) }
 })
