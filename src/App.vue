@@ -263,9 +263,13 @@ const ORIGIN = Cesium.Cartesian3.fromDegrees(116.3983, 39.9135)
 const ENU = Cesium.Transforms.eastNorthUpToFixedFrame(ORIGIN)
 const ENU_INV = Cesium.Matrix4.inverse(ENU, new Cesium.Matrix4())
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)) }
+// 本地体素坐标(x=east, y=up, z=north) → ECEF
+// 必须用 ENU 矩阵,不能用简化经纬度换算(111320*cosLat / 110542 与 WGS84 椭球有 0.1~0.5% 偏差,
+// 会造成随距离增长的偏移: 选中框/碎屑/光斑/角色相对方块位置越来越偏)
+const _wposLocal = new Cesium.Cartesian3()
 function wpos(x, y, z) {
-  const cosLat = Math.cos(39.9135 * Math.PI / 180)
-  return Cesium.Cartesian3.fromDegrees(116.3983 + x / (111320 * cosLat), 39.9135 + z / 110542, y)
+  _wposLocal.x = x; _wposLocal.y = z; _wposLocal.z = y
+  return Cesium.Matrix4.multiplyByPoint(ENU, _wposLocal, new Cesium.Cartesian3())
 }
 // 局部矩形 → 经纬度 Rectangle(云层用)
 function rectFromLocal(x0, z0, x1, z1) {
@@ -948,8 +952,8 @@ void main()
 // 线框 geometry: 12 条边各一个细长盒子(截面 0.024m),顶点烘到 ECEF,带 normal/st(与 chunk 同格式)
 function buildHLGeometry(hit) {
   const [hx, hy, hz] = hit
-  const e = 0.004          // 外扩避免与方块面深度抖动
-  const t2 = 0.012         // 线半厚(总粗 0.024m)
+  const e = 0.004          // 沿棱方向外伸(保证拐角接合)
+  const t2 = 0.005         // 线半厚(总粗 0.01m,细线贴边)
   const pos = [], nor = [], sts = [], idx = []
   const box = (x0, y0, z0, x1, y1, z1) => {
     const c = [
@@ -1472,7 +1476,7 @@ onMounted(async () => {
   window.__intervalId = setInterval(tick, 16)
   // 自动昼夜循环
   window.__dayCycle = setInterval(() => { sunHour.value = (sunHour.value + 0.15) % 24; applySun() }, 3000)
-  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, sunHour, get attacking() { return attacking }, get hlPrimitive() { return hlPrimitive } }
+  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, wpos, sunHour, get attacking() { return attacking }, get hlPrimitive() { return hlPrimitive } }
   window.__Cesium = Cesium
   } catch(e) { window.__mountErr = String(e.stack || e.message || e); console.error('[Engine] mount error:', e) }
 })
