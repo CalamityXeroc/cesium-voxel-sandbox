@@ -713,13 +713,47 @@ function addVoxelTree(x, z) {
   setVoxelRaw(x, top + 1, z, B.LEAF)
 }
 
+/* ---- 露天洞穴: 地下洞厅 + 斜通地表的漏斗口(可见、可走入) ---- */
+function carveOpenCave(cx, cz) {
+  const sy = surfaceYAt(cx, cz)
+  const chamberY = sy - 10          // 洞厅中心高度
+  const R = 7, RY = 3.5            // 洞厅椭球半径(水平/垂直)
+  if (chamberY - RY < 7) return
+  // 1. 洞厅(椭球)
+  for (let x = cx - Math.ceil(R); x <= cx + Math.ceil(R); x++) {
+    for (let z = cz - Math.ceil(R); z <= cz + Math.ceil(R); z++) {
+      for (let y = Math.max(4, chamberY - Math.ceil(RY)); y <= Math.min(sy + 1, chamberY + Math.ceil(RY)); y++) {
+        const dx = (x - cx) / R, dy = (y - chamberY) / RY, dz = (z - cz) / R
+        if (dx * dx + dy * dy + dz * dz < 1) setVoxelRaw(x, y, z, AIR)
+      }
+    }
+  }
+  // 2. 漏斗口: 从洞厅斜通地表,越靠上越宽(噪声决定漂移与形状)
+  const topY = sy + 1
+  for (let y = chamberY; y <= topY; y++) {
+    const t = (y - chamberY) / Math.max(1, topY - chamberY)
+    const mx = cx + 2 + noise2D(cx * 0.23 + 17, y * 0.19) * 3 * t
+    const mz = cz - 2 + noise2D(cz * 0.23 - 41, y * 0.19) * 3 * t
+    const r = 1.1 + t * t * 3.4
+    for (let x = Math.floor(mx - r); x <= Math.ceil(mx + r); x++) {
+      for (let z = Math.floor(mz - r); z <= Math.ceil(mz + r); z++) {
+        const dx = x - mx, dz = z - mz
+        if (dx * dx + dz * dz <= r * r && y >= 4) setVoxelRaw(x, y, z, AIR)
+      }
+    }
+  }
+}
+
 function buildWorld() {
   genTerrain()
+  // 露天洞穴 2 处(避开出生区)
+  carveOpenCave(36, -30)
+  carveOpenCave(-44, 26)
   // 树木(避开出生平整区)
   let seed = 7
   const rnd = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647 }
   let made = 0, guard = 0
-  while (made < 22 && guard++ < 300) {
+  while (made < 44 && guard++ < 700) {
     const x = Math.round(rnd() * 104 - 52), z = Math.round(rnd() * 104 - 52)
     if (Math.abs(x) < 14 && Math.abs(z) < 14) continue
     if (voxelAt(x, voxelGroundY(x, z) - 1, z) !== B.GRASS) continue
