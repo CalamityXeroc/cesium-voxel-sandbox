@@ -942,6 +942,79 @@ function updateInteraction(dt) {
   if (ray) destroyBlockAt(ray.hit[0], ray.hit[1], ray.hit[2])
 }
 
+/* ============ 破坏碎屑粒子(MC 风格: 方块纹理小片段爆开) ============ */
+let debrisCollection = null
+const debrisList = []
+const debrisTexCache = new Map()   // 方块id -> 4 个随机 16x16 纹理片段
+const DEBRIS_COUNT = 16
+
+function initDebris() {
+  debrisCollection = new Cesium.BillboardCollection()
+  viewer.scene.primitives.add(debrisCollection)
+}
+// 从图集裁剪该方块的随机小片段作为碎屑纹理
+function debrisTex(id) {
+  let arr = debrisTexCache.get(id)
+  if (!arr) {
+    arr = []
+    const ti = faceTexFor(id, 2)   // 侧面纹理
+    if (ti !== undefined) {
+      const sx = (ti % TILES_PER_ROW) * TILE, sy = Math.floor(ti / TILES_PER_ROW) * TILE
+      for (let i = 0; i < 4; i++) {
+        const cv = document.createElement('canvas'); cv.width = cv.height = 16
+        cv.getContext('2d').drawImage(atlasCanvas,
+          sx + Math.floor(Math.random() * (TILE - 16)), sy + Math.floor(Math.random() * (TILE - 16)), 16, 16, 0, 0, 16, 16)
+        arr.push(cv)
+      }
+    }
+    debrisTexCache.set(id, arr)
+  }
+  return arr.length ? arr[(Math.random() * arr.length) | 0] : null
+}
+function spawnDebris(x, y, z, id) {
+  if (!debrisCollection) return
+  for (let i = 0; i < DEBRIS_COUNT; i++) {
+    const tex = debrisTex(id)
+    if (!tex) break
+    const dx = x + 0.15 + Math.random() * 0.7
+    const dy = y + 0.15 + Math.random() * 0.7
+    const dz = z + 0.15 + Math.random() * 0.7
+    const b = debrisCollection.add({
+      position: wpos(dx, dy, dz),
+      image: tex,
+      width: 0.13, height: 0.13, sizeInMeters: true,
+    })
+    debrisList.push({
+      b, x: dx, y: dy, z: dz,
+      vx: (Math.random() - 0.5) * 3.4,
+      vy: 1.6 + Math.random() * 2.4,
+      vz: (Math.random() - 0.5) * 3.4,
+      life: 0.55 + Math.random() * 0.45,
+      size: 0.09 + Math.random() * 0.07,
+    })
+  }
+}
+function updateDebris(dt) {
+  if (!debrisList.length) return
+  for (let i = debrisList.length - 1; i >= 0; i--) {
+    const d = debrisList[i]
+    d.life -= dt
+    if (d.life <= 0) { debrisCollection.remove(d.b); debrisList.splice(i, 1); continue }
+    d.vy += GRAVITY * dt
+    const nx = d.x + d.vx * dt, ny = d.y + d.vy * dt, nz = d.z + d.vz * dt
+    if (voxelAt(Math.floor(nx), Math.floor(ny), Math.floor(nz))) {
+      // 撞到方块: 反弹衰减(位置留在原地)
+      d.vy = -d.vy * 0.3; d.vx *= 0.55; d.vz *= 0.55
+    } else {
+      d.x = nx; d.y = ny; d.z = nz
+    }
+    const fade = Math.min(1, d.life / 0.3)   // 最后 0.3s 缩小消失
+    const s = d.size * (0.45 + 0.55 * fade)
+    d.b.width = s; d.b.height = s
+    d.b.position = wpos(d.x, d.y, d.z)
+  }
+}
+
 const MAX_REACH = 5.5
 function placeBlockVoxel(x, y, z, id) {
   if (!setVoxelRaw(x, y, z, id)) return
@@ -956,6 +1029,7 @@ function destroyBlockAt(x, y, z) {
   if (!oldId) return
   if (!setVoxelRaw(x, y, z, AIR)) return
   sfxBreak()
+  spawnDebris(x, y, z, oldId)
   if (oldId === B.GLOW) removeGlowHalo(x, y, z)
   rebuildChunkAt(x, z)
   // 上方沙子落下
@@ -1038,7 +1112,7 @@ function tick() {
   const now = performance.now()
   const dt = Math.min(0.05, (now - lastTick) / 1000 || 0.016)
   lastTick = now
-  updatePlayer(dt); updateBalls(dt); updateCamera(); updateClouds(dt); updateLightUniforms(); updateInteraction(dt)
+  updatePlayer(dt); updateBalls(dt); updateCamera(); updateClouds(dt); updateLightUniforms(); updateInteraction(dt); updateDebris(dt)
   frameCount++
   if (!fpsWindow) { fpsWindow = now; lastHudT = now }
   if (now - fpsWindow >= 500) {
@@ -1284,7 +1358,7 @@ onMounted(async () => {
   window.addEventListener('pointerdown', onPointerDown); window.addEventListener('pointerup', onPointerUp); window.addEventListener('click', onCanvasClick); window.addEventListener('contextmenu', onCanvasContext)
   document.addEventListener('pointerlockchange', onPointerLockChange)
   document.addEventListener('pointerlockerror', onPointerLockError)
-  buildCharacter(); setCamMode(camMode.value); initInteractionVisuals(); buildWorld(); initChunkRendering(); buildAllChunks(); buildCelestial(); buildClouds()
+  buildCharacter(); setCamMode(camMode.value); initInteractionVisuals(); initDebris(); buildWorld(); initChunkRendering(); buildAllChunks(); buildCelestial(); buildClouds()
   // 出生点:放到地表(否则初始 y 会埋在基岩附近的地底)
   player.x = 0; player.z = 0; player.y = voxelGroundY(0, 0) + 0.2; player.vy = 0; player.yaw = -1.5 // 朝西(开阔谷地)
   applySun() // 初始化光照与天空颜色(与 sunHour 一致)
