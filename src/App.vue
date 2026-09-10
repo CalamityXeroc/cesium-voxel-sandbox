@@ -25,7 +25,7 @@
       <div><b>空格</b> 跳跃</div>
       <div><b>左键</b> 破坏(可连挖)</div>
       <div><b>右键</b> 放置</div>
-      <div><b>1-9</b> 选物品</div>
+      <div><b>1-0</b> 选物品</div>
       <div><b>滚轮</b> 切换</div>
       <div><b>点击画面</b> 锁定鼠标</div>
       <div><b>ESC</b> 释放鼠标</div>
@@ -126,10 +126,16 @@ const tonemapper = ref('neutral')
 
 /* ============ 方块类型与纹理图集 ============ */
 const AIR = 0
-const B = { GRASS: 1, DIRT: 2, STONE: 3, PLANK: 4, BRICK: 5, GLASS: 6, LOG: 7, LEAF: 8, SAND: 9, SNOW: 10, GLOW: 11 }
+const B = { GRASS: 1, DIRT: 2, STONE: 3, PLANK: 4, BRICK: 5, GLASS: 6, LOG: 7, LEAF: 8, SAND: 9, SNOW: 10, GLOW: 11,
+            LOG_PINE: 12, LEAF_PINE: 13, LOG_BIRCH: 14, LEAF_BIRCH: 15, CACTUS: 16, SANDSTONE: 17,
+            PLANT_GRASS: 18, FLOWER_RED: 19, FLOWER_YELLOW: 20 }
+const PLANTS = [B.PLANT_GRASS, B.FLOWER_RED, B.FLOWER_YELLOW]
+function isPlant(id) { return id === B.PLANT_GRASS || id === B.FLOWER_RED || id === B.FLOWER_YELLOW }
+// 实心(阻挡/支撑): 非空气且非植物
+function isSolidId(id) { return id !== AIR && !isPlant(id) }
 
-// 纹理图集:256×256 canvas,每种方块占 64×64 子区域(2×4 布局)
-const ATLAS_SIZE = 256, TILE = 64, TILES_PER_ROW = 4
+// 纹理图集:512×512 canvas,8×8 共 64 格,每格 64×64(为群系新增方块扩容)
+const ATLAS_SIZE = 512, TILE = 64, TILES_PER_ROW = 8
 const atlasCanvas = document.createElement('canvas')
 atlasCanvas.width = atlasCanvas.height = ATLAS_SIZE
 const atlasCtx = atlasCanvas.getContext('2d')
@@ -230,13 +236,94 @@ makeBlockTex('log_top', 12, (g) => {
   }
   g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 3; g.strokeRect(1, 1, 62, 62)
 })
+// ===== 群系新贴图 =====
+// 森林草地(深绿,与平原草地区分)
+makeBlockTex('grass_forest', 13, (g) => {
+  g.fillStyle = '#4f7c3a'; g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 200; i++) { g.fillStyle = `rgba(${rand(g,30)+50},${rand(g,40)+100},${rand(g,30)+40},0.45)`; g.fillRect(rand(g,64), rand(g,64), 3, 3) }
+  g.fillStyle = '#6e5512'; g.fillRect(0, 48, 64, 16)
+  g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, 48, 64, 2)
+})
+// 松木(深色树皮)
+makeBlockTex('log_pine', 14, (g) => {
+  g.fillStyle = '#4a3524'; g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 14; i++) { g.fillStyle = `rgba(${rand(g,25)+50},${rand(g,20)+35},${rand(g,15)+20},0.55)`; g.fillRect(rand(g,58), 0, rand(g,5)+2, 64) }
+  for (let i = 0; i < 7; i++) { g.strokeStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.moveTo(i * 9 + 4, 0); g.lineTo(i * 9 + 4, 64); g.stroke() }
+})
+// 松针(深绿)
+makeBlockTex('leaf_pine', 15, (g) => {
+  g.fillStyle = '#2a5c33'; g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 300; i++) { g.fillStyle = `rgba(${rand(g,30)+30},${rand(g,40)+75},${rand(g,25)+35},0.7)`; g.fillRect(rand(g,60), rand(g,60), rand(g,6)+3, rand(g,6)+3) }
+  for (let i = 0; i < 50; i++) { g.fillStyle = 'rgba(0,0,0,0.28)'; g.fillRect(rand(g,60), rand(g,60), 3, 3) }
+})
+// 白桦木(白底黑斑)
+makeBlockTex('log_birch', 16, (g) => {
+  g.fillStyle = '#e6e2d6'; g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 10; i++) { g.fillStyle = 'rgba(180,175,160,0.5)'; g.fillRect(rand(g,60), 0, rand(g,4)+2, 64) }
+  for (let i = 0; i < 16; i++) { g.fillStyle = 'rgba(40,38,34,0.85)'; g.fillRect(rand(g,56), rand(g,60), rand(g,10)+4, rand(g,3)+2) }
+})
+// 白桦叶(亮绿)
+makeBlockTex('leaf_birch', 17, (g) => {
+  g.fillStyle = '#6fae4a'; g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(${rand(g,40)+90},${rand(g,50)+130},${rand(g,30)+50},0.6)`; g.fillRect(rand(g,60), rand(g,60), rand(g,7)+3, rand(g,7)+3) }
+  for (let i = 0; i < 32; i++) { g.fillStyle = 'rgba(0,0,0,0.2)'; g.fillRect(rand(g,60), rand(g,60), 3, 3) }
+})
+// 仙人掌
+makeBlockTex('cactus', 18, (g) => {
+  g.fillStyle = '#3f7f3a'; g.fillRect(0, 0, 64, 64)
+  for (let i = 0; i < 60; i++) { g.fillStyle = 'rgba(0,0,0,0.12)'; g.fillRect(rand(g,62), rand(g,62), 2, 3) }
+  g.strokeStyle = 'rgba(20,50,20,0.7)'; g.lineWidth = 2
+  for (let i = 0; i < 5; i++) { g.beginPath(); g.moveTo(i * 13 + 6, 0); g.lineTo(i * 13 + 6, 64); g.stroke() }
+  g.fillStyle = 'rgba(230,240,200,0.9)'
+  for (let i = 0; i < 40; i++) g.fillRect(rand(g,62), rand(g,62), 2, 2)
+})
+// 沙岩(沙漠深层)
+makeBlockTex('sandstone', 19, (g) => {
+  g.fillStyle = '#d8c88f'; g.fillRect(0, 0, 64, 64)
+  for (let r = 0; r < 4; r++) { g.fillStyle = r % 2 ? 'rgba(190,170,110,0.35)' : 'rgba(232,218,162,0.35)'; g.fillRect(0, r * 16, 64, 16) }
+  for (let i = 0; i < 120; i++) { g.fillStyle = `rgba(${rand(g,30)+190},${rand(g,25)+170},${rand(g,25)+120},0.4)`; g.fillRect(rand(g,62), rand(g,62), 2, 2) }
+})
+// 草丛(透明底,十字交叉渲染)
+makeBlockTex('plant_grass', 20, (g) => {
+  g.clearRect(0, 0, 64, 64)
+  g.lineCap = 'round'
+  g.strokeStyle = '#5c8f3a'; g.lineWidth = 3
+  for (let i = 0; i < 9; i++) {
+    const bx = 7 + i * 6 + rand(g, 3)
+    g.beginPath(); g.moveTo(bx, 64)
+    g.quadraticCurveTo(bx + rand(g, 10) - 5, 40, bx + rand(g, 16) - 8, 10 + rand(g, 12))
+    g.stroke()
+  }
+  g.strokeStyle = '#7fb04c'; g.lineWidth = 2
+  for (let i = 0; i < 6; i++) { const bx = 10 + i * 9; g.beginPath(); g.moveTo(bx, 64); g.lineTo(bx + 3, 26 + rand(g, 12)); g.stroke() }
+})
+// 花(红/黄,透明底)
+function flowerTex(petal, core) {
+  return (g) => {
+    g.clearRect(0, 0, 64, 64)
+    g.strokeStyle = '#4f7a2e'; g.lineWidth = 3
+    g.beginPath(); g.moveTo(32, 64); g.lineTo(32, 28); g.stroke()
+    g.fillStyle = '#5c8f3a'
+    g.beginPath(); g.ellipse(22, 46, 9, 5, -0.5, 0, 6.3); g.fill()
+    g.beginPath(); g.ellipse(43, 52, 9, 5, 0.5, 0, 6.3); g.fill()
+    g.fillStyle = petal
+    for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2 - Math.PI / 2; g.beginPath(); g.arc(32 + Math.cos(a) * 10, 24 + Math.sin(a) * 10, 8, 0, 6.3); g.fill() }
+    g.fillStyle = core; g.beginPath(); g.arc(32, 24, 6, 0, 6.3); g.fill()
+  }
+}
+makeBlockTex('flower_red', 21, flowerTex('#d8443c', '#f2d060'))
+makeBlockTex('flower_yellow', 22, flowerTex('#e8c33c', '#8a6a20'))
 
 // 体素 ID → 图集序号(与 B 对应)
-const BLOCK_TEX = { [B.GRASS]: blockTexIdx.grass, [B.DIRT]: blockTexIdx.dirt, [B.STONE]: blockTexIdx.stone, [B.PLANK]: blockTexIdx.plank, [B.BRICK]: blockTexIdx.brick, [B.GLASS]: blockTexIdx.glass, [B.LOG]: blockTexIdx.log, [B.LEAF]: blockTexIdx.leaf, [B.SAND]: blockTexIdx.sand, [B.SNOW]: blockTexIdx.snow, [B.GLOW]: blockTexIdx.glow }
+const BLOCK_TEX = { [B.GRASS]: blockTexIdx.grass, [B.DIRT]: blockTexIdx.dirt, [B.STONE]: blockTexIdx.stone, [B.PLANK]: blockTexIdx.plank, [B.BRICK]: blockTexIdx.brick, [B.GLASS]: blockTexIdx.glass, [B.LOG]: blockTexIdx.log, [B.LEAF]: blockTexIdx.leaf, [B.SAND]: blockTexIdx.sand, [B.SNOW]: blockTexIdx.snow, [B.GLOW]: blockTexIdx.glow,
+  [B.LOG_PINE]: blockTexIdx.log_pine, [B.LEAF_PINE]: blockTexIdx.leaf_pine, [B.LOG_BIRCH]: blockTexIdx.log_birch, [B.LEAF_BIRCH]: blockTexIdx.leaf_birch, [B.CACTUS]: blockTexIdx.cactus, [B.SANDSTONE]: blockTexIdx.sandstone,
+  [B.PLANT_GRASS]: blockTexIdx.plant_grass, [B.FLOWER_RED]: blockTexIdx.flower_red, [B.FLOWER_YELLOW]: blockTexIdx.flower_yellow }
 const LOG_TOP_TEX = blockTexIdx.log_top
-// 按面取纹理(原木顶/底面用年轮)
-function faceTexFor(id, faceIdx) {
-  if (id === B.LOG && faceIdx <= 1) return LOG_TOP_TEX
+const LOG_IDS = [B.LOG, B.LOG_PINE, B.LOG_BIRCH]
+// 按面取纹理(原木顶/底面用年轮;草地按群系着色)
+function faceTexFor(id, faceIdx, biome) {
+  if (LOG_IDS.includes(id) && faceIdx <= 1) return LOG_TOP_TEX
+  if (id === B.GRASS && biome === BIOME.FOREST) return blockTexIdx.grass_forest
   return BLOCK_TEX[id]
 }
 
@@ -245,17 +332,15 @@ const blockTypes = [
   { key: 'dirt', color: '#8b6914', name: '泥土' },
   { key: 'stone', color: '#7a7a7a', name: '石头' },
   { key: 'plank', color: '#bc9862', name: '木板' },
-  { key: 'brick', color: '#a0403c', name: '砖块' },
   { key: 'glass', color: 'rgba(180,220,255,0.6)', name: '玻璃' },
   { key: 'log', color: '#6b4a2f', name: '原木' },
   { key: 'leaf', color: '#2f7a35', name: '树叶' },
   { key: 'sand', color: '#e3d6a3', name: '沙子' },
-  { key: 'snow', color: '#eef4fa', name: '雪' },
   { key: 'glow', color: '#f0c060', name: '萤石' },
   { key: 'ball', color: '#ffe16b', name: '光球' },
 ]
 const blockIdByKey = { grass: B.GRASS, dirt: B.DIRT, stone: B.STONE, plank: B.PLANK, brick: B.BRICK, glass: B.GLASS, log: B.LOG, leaf: B.LEAF, sand: B.SAND, snow: B.SNOW, glow: B.GLOW }
-const BALL_SLOT = 11
+const BALL_SLOT = blockTypes.findIndex(b => b.key === 'ball')
 function currentBlockId() { return blockIdByKey[blockTypes[selectedSlot.value].key] || 0 }
 
 /* ============ 本地世界坐标 ============ */
@@ -312,8 +397,8 @@ function setVoxelRaw(x, y, z, id) {
   if (id) { const t = chunkTop.get(key) || 0; if (y > t) chunkTop.set(key, y) }
   return true
 }
-// 是否遮挡相邻面(玻璃/水半透明,不遮挡;但同种方块互剔)
-function isOpaque(id) { return id !== AIR && id !== B.GLASS }
+// 是否遮挡相邻面(玻璃半透明不遮挡;植物不遮挡且自身不参与剔除)
+function isOpaque(id) { return id !== AIR && id !== B.GLASS && !isPlant(id) }
 const isTranslucentId = (id) => id === B.GLASS
 
 /* ============ 地形生成(simplex 噪声) ============ */
@@ -330,6 +415,24 @@ function fbm3(x, y, z, oct, freq, gain, lac) {
   let sum = 0, amp = 1, f = freq, norm = 0
   for (let i = 0; i < oct; i++) { sum += noise3D(x * f, y * f, z * f) * amp; norm += amp; amp *= gain; f *= lac }
   return sum / norm
+}
+
+/* ---- 生物群系:温度/湿度气候噪声 → 草原/森林/沙漠/雪原 ---- */
+const BIOME = { PLAINS: 0, FOREST: 1, DESERT: 2, SNOWY: 3 }
+function climateAt(x, z) {
+  let temp = fbm2(x + 2100, z - 1700, 2, 1 / 140, 0.5, 2)
+  let humid = fbm2(x - 3300, z + 2900, 2, 1 / 110, 0.5, 2)
+  // 出生区偏置:距原点 48 格内把气候拉回平原区间,保证出生点观感
+  const bias = clamp(1 - Math.hypot(x, z) / 48, 0, 1)
+  temp *= (1 - bias); humid *= (1 - bias)
+  return [temp, humid]
+}
+function biomeAt(x, z) {
+  const [t, h] = climateAt(x, z)
+  if (t < -0.18) return BIOME.SNOWY
+  if (t > 0.16 && h < -0.02) return BIOME.DESERT
+  if (h > 0.12) return BIOME.FOREST
+  return BIOME.PLAINS
 }
 
 /* ---- 地表高度:大陆度 + 缓丘(平坦化: 大尺度缓坡,实际相邻高差约 1.3 格/8格) ---- */
@@ -364,6 +467,7 @@ function genTerrain() {
     for (let z = -WORLD_HALF; z < WORLD_HALF; z++) {
       const spawnFlat = Math.abs(x) <= 10 && Math.abs(z) <= 10
       const sy = spawnFlat ? spawnY : surfaceYAt(x, z)
+      const biome = spawnFlat ? BIOME.PLAINS : biomeAt(x, z)
       const top = Math.min(VOX_H - 1, sy + 14)
       for (let y = 0; y <= top; y++) {
         let solid
@@ -375,9 +479,19 @@ function genTerrain() {
         if (solid && y >= 5 && y <= sy - 7 && caveAt(x, y, z)) solid = false
         if (solid) {
           let id
-          if (y >= sy - 1) id = B.GRASS
-          else if (y >= sy - 4) id = B.DIRT
-          else id = B.STONE
+          if (biome === BIOME.DESERT) {
+            if (y >= sy - 3) id = B.SAND                       // 沙漠:表层沙
+            else if (y >= sy - 7) id = B.SANDSTONE             // 次层沙岩
+            else id = B.STONE
+          } else if (biome === BIOME.SNOWY) {
+            if (y >= sy - 1) id = B.SNOW                       // 雪原:表层雪
+            else if (y >= sy - 4) id = B.DIRT
+            else id = B.STONE
+          } else {
+            if (y >= sy - 1) id = B.GRASS                      // 草原/森林:草地(群系着色)
+            else if (y >= sy - 4) id = B.DIRT
+            else id = B.STONE
+          }
           setVoxelRaw(x, y, z, id)
         }
       }
@@ -434,18 +548,46 @@ function vertexAO(vx, vy, vz, f, ci) {
   return AO_LEVELS[3 - (s1 + s2 + cc)]
 }
 
-// 构建 chunk 的两个 geometry:不透明 + 玻璃(半透明)
+// 构建 chunk 的三个 geometry:不透明 + 玻璃(半透明) + 植物(十字裁剪)
 function buildChunkGeometries(cx, cz) {
   const ox = cx * VOX_W, oz = cz * VOX_D
   const opaque = { pos: [], nor: [], uv: [], ao: [], idx: [] }
   const glass = { pos: [], nor: [], uv: [], ao: [], idx: [] }   // 半透明层(玻璃)
+  const plants = { pos: [], nor: [], uv: [], ao: [], idx: [] }  // 植物层(交叉面)
   const arr = chunks.get(chunkKeyOf(cx, cz))
   if (!arr) return null
   const topY = Math.min(VOX_H - 1, chunkTop.get(chunkKeyOf(cx, cz)) ?? VOX_H - 1)
+  // 每列群系(决定草地贴图着色)
+  const biomeCol = new Array(VOX_W * VOX_D)
+  for (let lx = 0; lx < VOX_W; lx++) for (let lz = 0; lz < VOX_D; lz++) biomeCol[lx * VOX_D + lz] = biomeAt(ox + lx, oz + lz)
   for (let ly = 0; ly <= topY; ly++) for (let lx = 0; lx < VOX_W; lx++) for (let lz = 0; lz < VOX_D; lz++) {
     const id = arr[voxelIndex(lx, ly, lz)]
     if (!id) continue
     const wx = ox + lx, wy = ly, wz = oz + lz
+    const biome = biomeCol[lx * VOX_D + lz]
+    // 植物:两个交叉对角面(双面渲染由 plantAppearance 负责,不参与邻面剔除)
+    if (isPlant(id)) {
+      const ti = BLOCK_TEX[id]
+      if (ti === undefined) continue
+      const uvs = faceUVs(ti)
+      const lo = 0.12, hi = 0.88
+      const quads = [
+        [[lo, 0, lo], [hi, 0, hi], [hi, 1, hi], [lo, 1, lo]],
+        [[hi, 0, lo], [lo, 0, hi], [lo, 1, hi], [hi, 1, lo]],
+      ]
+      for (const q of quads) {
+        const base = plants.pos.length / 3
+        for (let ci = 0; ci < 4; ci++) {
+          const c = q[ci]
+          plants.pos.push(wx + c[0], wz + c[2], wy + c[1])   // 体素(x=E,y=U,z=N) → ENU(E,N,U)
+          plants.nor.push(0, 1, 0)
+          plants.uv.push(uvs[ci][0], uvs[ci][1])
+          plants.ao.push(1)
+        }
+        plants.idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
+      }
+      continue
+    }
     const translucent = isTranslucentId(id)
     const target = translucent ? glass : opaque
     for (let fi = 0; fi < FACES.length; fi++) {
@@ -454,7 +596,7 @@ function buildChunkGeometries(cx, cz) {
       // 剔除:半透明方块仅与同种方块互剔;不透明方块被不透明邻块遮挡
       const hidden = translucent ? (nb === id) : isOpaque(nb)
       if (hidden) continue
-      const ti = faceTexFor(id, fi)
+      const ti = faceTexFor(id, fi, biome)
       if (ti === undefined) continue
       const base = target.pos.length / 3
       const uvs = faceUVs(ti)
@@ -482,7 +624,7 @@ function buildChunkGeometries(cx, cz) {
       boundingSphere: Cesium.BoundingSphere.fromVertices(d.pos),
     })
   }
-  return { opaque: mk(opaque), glass: mk(glass) }
+  return { opaque: mk(opaque), glass: mk(glass), plants: mk(plants) }
 }
 
 // 局部 ENU(东,北,上) → ECEF 的变换矩阵(右手系,与 Cesium eastNorthUpToFixedFrame 一致)
@@ -491,7 +633,7 @@ function computeWorldMatrix() {
   WORLD_MATRIX = ENU
 }
 
-let chunkAppearance = null, glassAppearance = null
+let chunkAppearance = null, glassAppearance = null, plantAppearance = null
 const MAX_LIGHTS = 8
 const lightUniformSets = []   // 每个 appearance 一套 uniform
 
@@ -576,16 +718,20 @@ void main()
 }
 `
 
+const VOXEL_FS_CUTOUT = VOXEL_FS.replace(
+  '    out_FragColor = vec4(color, material.alpha);',
+  '    if (material.alpha < 0.5) discard;\n    out_FragColor = vec4(color, 1.0);')
+
 function initChunkRendering() {
   computeWorldMatrix()
-  const makeApp = (translucent) => {
+  const makeApp = (translucent, fsSource, cull) => {
     const app = new Cesium.Appearance({
       material: Cesium.Material.fromType('Image', { image: atlasCanvas }),
       vertexShaderSource: VOXEL_VS,
-      fragmentShaderSource: VOXEL_FS,
+      fragmentShaderSource: fsSource || VOXEL_FS,
       vertexFormat: Cesium.VertexFormat.POSITION_NORMAL_AND_ST,
       translucent,
-      renderState: { depthTest: { enabled: true }, cull: { enabled: true, face: Cesium.CullFace.BACK } },
+      renderState: { depthTest: { enabled: true }, cull: { enabled: cull, face: Cesium.CullFace.BACK } },
     })
     const u = {}
     for (let i = 0; i < MAX_LIGHTS; i++) {
@@ -596,8 +742,9 @@ function initChunkRendering() {
     lightUniformSets.push(u)
     return app
   }
-  chunkAppearance = makeApp(false)
-  glassAppearance = makeApp(true)
+  chunkAppearance = makeApp(false, null, true)
+  glassAppearance = makeApp(true, null, false)
+  plantAppearance = makeApp(false, VOXEL_FS_CUTOUT, false)   // 交叉面双面 + alpha 裁剪
 }
 
 /* 每帧更新点光源眼空间位置(取离相机最近的 MAX_LIGHTS 个萤石) */
@@ -645,11 +792,12 @@ function rebuildChunk(cx, cz) {
   if (old) {
     if (old.opaque) viewer.scene.primitives.remove(old.opaque)
     if (old.glass) viewer.scene.primitives.remove(old.glass)
+    if (old.plants) viewer.scene.primitives.remove(old.plants)
     chunkPrimitives.delete(key)
   }
   const geos = buildChunkGeometries(cx, cz)
   if (!geos) return
-  const rec = { opaque: null, glass: null }
+  const rec = { opaque: null, glass: null, plants: null }
   const mkPrim = (geo, appearance, translucency) => {
     if (!geo) return null
     const prim = new Cesium.Primitive({
@@ -662,6 +810,7 @@ function rebuildChunk(cx, cz) {
   }
   rec.opaque = mkPrim(geos.opaque, chunkAppearance, false)
   rec.glass = mkPrim(geos.glass, glassAppearance, true)
+  rec.plants = mkPrim(geos.plants, plantAppearance, false)
   chunkPrimitives.set(key, rec)
 }
 
@@ -697,12 +846,19 @@ let lastSpaceTap = 0
 let stepAccum = 0
 
 /* ============ 世界搭建 ============ */
-function addVoxelTree(x, z) {
-  const gy = voxelGroundY(x, z)
+// 确定性哈希(同一种子下世界可复现) — 必须用 Math.imul 保持 int32 运算,
+// 否则乘法溢出 2^53 精度后值域只剩 [0,0.5],分布严重偏斜
+function hash2(x, z, s) {
+  let h = Math.imul(x | 0, 374761393) + Math.imul(z | 0, 668265263) + Math.imul(s | 0, 1274126177)
+  h = Math.imul(h ^ (h >>> 13), 1117307467)
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+// 橡树(草原/森林)
+function addVoxelTree(x, z, gy) {
   const h = 3 + Math.floor(Math.random() * 2)
   for (let y = gy; y < gy + h; y++) setVoxelRaw(x, y, z, B.LOG)
   const top = gy + h
-  // 树叶:十字+顶层
   for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
     if (Math.abs(dx) + Math.abs(dz) > 3) continue
     for (let dy = 0; dy <= 1; dy++) {
@@ -711,6 +867,87 @@ function addVoxelTree(x, z) {
     }
   }
   setVoxelRaw(x, top + 1, z, B.LEAF)
+}
+// 白桦(森林,高瘦亮叶)
+function addBirchAt(x, z, gy) {
+  const h = 5 + Math.floor(Math.random() * 3)
+  for (let y = gy; y < gy + h; y++) setVoxelRaw(x, y, z, B.LOG_BIRCH)
+  const top = gy + h
+  for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
+    if (Math.abs(dx) + Math.abs(dz) > 2) continue
+    for (let dy = 0; dy <= 1; dy++) {
+      if (dx === 0 && dz === 0 && dy === 0) continue
+      if (!voxelAt(x + dx, top + dy, z + dz)) setVoxelRaw(x + dx, top + dy, z + dz, B.LEAF_BIRCH)
+    }
+  }
+  setVoxelRaw(x, top + 1, z, B.LEAF_BIRCH)
+}
+// 云杉(雪原,分层锥形深色)
+function addPineAt(x, z, gy) {
+  const h = 5 + Math.floor(Math.random() * 3)
+  for (let y = gy; y < gy + h; y++) setVoxelRaw(x, y, z, B.LOG_PINE)
+  const top = gy + h
+  const radii = [2, 2, 1, 1, 0]   // 从上到下变宽
+  for (let i = 0; i < radii.length; i++) {
+    const y = top + 1 - i
+    if (y <= gy) continue
+    const r = radii[i]
+    for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+      if (Math.abs(dx) + Math.abs(dz) > r + 1) continue
+      if (dx === 0 && dz === 0 && i < radii.length - 1) continue   // 保留树干
+      if (!voxelAt(x + dx, y, z + dz)) setVoxelRaw(x + dx, y, z + dz, B.LEAF_PINE)
+    }
+  }
+}
+// 仙人掌(沙漠,立柱)
+function addCactusAt(x, z, gy) {
+  const h = 2 + Math.floor(Math.random() * 3)
+  for (let y = gy; y < gy + h; y++) setVoxelRaw(x, y, z, B.CACTUS)
+}
+
+/* ---- 树木:全图按群系密度散布(森林最密) ---- */
+function plantTrees() {
+  for (let gx = -WORLD_HALF + 4; gx < WORLD_HALF - 4; gx += 4) {
+    for (let gz = -WORLD_HALF + 4; gz < WORLD_HALF - 4; gz += 4) {
+      const x = gx + Math.floor(hash2(gx, gz, 1) * 4)
+      const z = gz + Math.floor(hash2(gx, gz, 2) * 4)
+      if (Math.abs(x) < 16 && Math.abs(z) < 16) continue          // 出生区留空
+      const biome = biomeAt(x, z)
+      const p = biome === BIOME.FOREST ? 0.32 : biome === BIOME.SNOWY ? 0.14 : biome === BIOME.DESERT ? 0.035 : 0.06
+      if (hash2(x, z, 3) > p) continue
+      const gy = voxelGroundY(x, z)
+      if (voxelAt(x, gy, z)) continue                             // 柱位需空
+      const below = voxelAt(x, gy - 1, z)
+      if (biome === BIOME.DESERT) {
+        if (below !== B.SAND) continue
+        addCactusAt(x, z, gy)
+      } else if (biome === BIOME.SNOWY) {
+        if (below !== B.SNOW && below !== B.GRASS) continue
+        addPineAt(x, z, gy)
+      } else {
+        if (below !== B.GRASS) continue
+        if (biome === BIOME.FOREST && hash2(x, z, 4) < 0.45) addBirchAt(x, z, gy)
+        else addVoxelTree(x, z, gy)
+      }
+    }
+  }
+}
+
+/* ---- 小型植被:草地表按群系概率散布草丛/花 ---- */
+function scatterPlants() {
+  for (let x = -WORLD_HALF + 2; x < WORLD_HALF - 2; x++) {
+    for (let z = -WORLD_HALF + 2; z < WORLD_HALF - 2; z++) {
+      if (Math.abs(x) < 13 && Math.abs(z) < 13) continue
+      const biome = biomeAt(x, z)
+      const p = biome === BIOME.FOREST ? 0.14 : biome === BIOME.PLAINS ? 0.04 : 0
+      if (p === 0 || hash2(x, z, 11) > p) continue
+      const gy = voxelGroundY(x, z)
+      if (voxelAt(x, gy, z)) continue
+      if (voxelAt(x, gy - 1, z) !== B.GRASS) continue
+      const pick = hash2(x, z, 12)
+      setVoxelRaw(x, gy, z, pick < 0.62 ? B.PLANT_GRASS : pick < 0.81 ? B.FLOWER_RED : B.FLOWER_YELLOW)
+    }
+  }
 }
 
 /* ---- 露天洞穴: 地下洞厅 + 斜通地表的漏斗口(可见、可走入) ---- */
@@ -749,17 +986,9 @@ function buildWorld() {
   // 露天洞穴 2 处(避开出生区)
   carveOpenCave(36, -30)
   carveOpenCave(-44, 26)
-  // 树木(避开出生平整区)
-  let seed = 7
-  const rnd = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647 }
-  let made = 0, guard = 0
-  while (made < 44 && guard++ < 700) {
-    const x = Math.round(rnd() * 104 - 52), z = Math.round(rnd() * 104 - 52)
-    if (Math.abs(x) < 14 && Math.abs(z) < 14) continue
-    if (voxelAt(x, voxelGroundY(x, z) - 1, z) !== B.GRASS) continue
-    addVoxelTree(x, z)
-    made++
-  }
+  // 树木与植被(按群系密度)
+  plantTrees()
+  scatterPlants()
 }
 
 /* ============ 角色 ============ */
@@ -784,22 +1013,23 @@ function buildCharacter() {
 }
 
 /* ============ 地面高度与碰撞(体素) ============ */
-// 从玩家脚下向下扫第一个实心格(悬空桥/天花板场景正确)
+// 从玩家脚下向下扫第一个实心格(悬空桥/天花板场景正确;植物不阻挡)
 function groundHeight(x, z) {
   const bx = Math.floor(x), bz = Math.floor(z)
   const startY = Math.min(VOX_H - 1, Math.floor(player.y + 0.001))
-  for (let y = startY; y >= 0; y--) if (voxelAt(bx, y, bz)) return y + 1
+  for (let y = startY; y >= 0; y--) if (isSolidId(voxelAt(bx, y, bz))) return y + 1
   return 0
 }
 function voxelGroundY(x, z) {
   const bx = Math.floor(x), bz = Math.floor(z)
   const cx = Math.floor(bx / VOX_W), cz = Math.floor(bz / VOX_D)
   const top = Math.min(VOX_H - 1, chunkTop.get(chunkKeyOf(cx, cz)) ?? VOX_H - 1)
-  for (let y = top; y >= 0; y--) if (voxelAt(bx, y, bz)) return y + 1
+  for (let y = top; y >= 0; y--) if (isSolidId(voxelAt(bx, y, bz))) return y + 1
   return 0
 }
-// 玩家 AABB(x±radius, y..y+height, z±radius) 是否与某体素格相交
+// 玩家 AABB(x±radius, y..y+height, z±radius) 是否与某实心体素格相交
 function playerIntersectsVoxel(bx, by, bz) {
+  if (!isSolidId(voxelAt(bx, by, bz))) return false
   return player.x - player.radius < bx + 1 && player.x + player.radius > bx &&
          player.y < by + 1 && player.y + player.height > by &&
          player.z - player.radius < bz + 1 && player.z + player.radius > bz
@@ -810,7 +1040,7 @@ function collideVoxels() {
   const minZ = Math.floor(player.z - player.radius), maxZ = Math.floor(player.z + player.radius)
   const minY = Math.floor(player.y + 0.001), maxY = Math.floor(player.y + player.height)
   for (let bx = minX; bx <= maxX; bx++) for (let bz = minZ; bz <= maxZ; bz++) for (let by = minY; by <= maxY; by++) {
-    if (!voxelAt(bx, by, bz)) continue
+    if (!isSolidId(voxelAt(bx, by, bz))) continue
     const px = Math.min(player.x + player.radius - bx, bx + 1 - (player.x - player.radius))
     const pz = Math.min(player.z + player.radius - bz, bz + 1 - (player.z - player.radius))
     const py = Math.min(player.y + player.height - by, by + 1 - player.y)
@@ -888,7 +1118,8 @@ function settleColumn(x, z, fromY) {
   for (let y = Math.min(fromY, VOX_H - 1); y > 0; y--) {
     if (voxelAt(x, y, z) !== B.SAND) continue
     let cy = y
-    while (cy > 0 && voxelAt(x, cy - 1, z) === AIR) cy--
+    // 空气与植物都可被沙埋没
+    while (cy > 0) { const bid = voxelAt(x, cy - 1, z); if (bid === AIR || isPlant(bid)) cy--; else break }
     if (cy !== y) {
       setVoxelRaw(x, y, z, AIR)
       setVoxelRaw(x, cy, z, B.SAND)
@@ -1091,12 +1322,13 @@ const debrisList = []
 const debrisTexCache = new Map()   // 方块id -> 4 个随机 16x16 纹理片段
 const DEBRIS_COUNT = 16
 
-// 从图集裁剪该方块的随机小片段作为碎屑纹理
-function debrisTex(id) {
-  let arr = debrisTexCache.get(id)
+// 从图集裁剪该方块的随机小片段作为碎屑纹理(草地按群系取对应贴图)
+function debrisTex(id, biome) {
+  const key = id + '|' + (biome === undefined ? '' : biome)
+  let arr = debrisTexCache.get(key)
   if (!arr) {
     arr = []
-    const ti = faceTexFor(id, 2)   // 侧面纹理
+    const ti = faceTexFor(id, 2, biome)   // 侧面纹理
     if (ti !== undefined) {
       const sx = (ti % TILES_PER_ROW) * TILE, sy = Math.floor(ti / TILES_PER_ROW) * TILE
       for (let i = 0; i < 4; i++) {
@@ -1106,13 +1338,13 @@ function debrisTex(id) {
         arr.push(cv)
       }
     }
-    debrisTexCache.set(id, arr)
+    debrisTexCache.set(key, arr)
   }
   return arr.length ? arr[(Math.random() * arr.length) | 0] : null
 }
 function spawnDebris(x, y, z, id) {
   for (let i = 0; i < DEBRIS_COUNT; i++) {
-    const tex = debrisTex(id)
+    const tex = debrisTex(id, biomeAt(x, z))
     if (!tex) break
     const d = {
       x: x + 0.15 + Math.random() * 0.7,
@@ -1171,6 +1403,8 @@ function destroyBlockAt(x, y, z) {
   sfxBreak()
   spawnDebris(x, y, z, oldId)
   if (oldId === B.GLOW) removeGlowHalo(x, y, z)
+  // 上方植物失去支撑 → 一并清除
+  if (isPlant(voxelAt(x, y + 1, z))) setVoxelRaw(x, y + 1, z, AIR)
   rebuildChunkAt(x, z)
   // 上方沙子落下
   settleColumn(x, z, y + 1); rebuildChunkAt(x, z)
@@ -1188,7 +1422,8 @@ function placeAtClick() {
   if (!ray || !ray.place) return
   const [x, y, z] = ray.place
   if (Math.abs(x) >= WORLD_HALF - 1 || Math.abs(z) >= WORLD_HALF - 1 || y < 0 || y >= VOX_H) return
-  if (voxelAt(x, y, z)) return
+  const dstId = voxelAt(x, y, z)
+  if (dstId && !isPlant(dstId)) return   // 植物可被直接替换
   if (playerIntersectsVoxel(x, y, z)) return // 不能把方块放进自己身体
   placeBlockVoxel(x, y, z, currentBlockId())
 }
@@ -1283,6 +1518,7 @@ function onKeyDown(e) {
   if (e.code === 'KeyC') toggleCam()
   if (e.code === 'KeyH') toggleUI()
   if (e.code >= 'Digit1' && e.code <= 'Digit9') selectedSlot.value = parseInt(e.code[5]) - 1
+  if (e.code === 'Digit0' && blockTypes.length >= 10) selectedSlot.value = 9
   // 双击空格切换飞行(创造模式)
   if (e.code === 'Space' && !e.repeat) {
     const now = performance.now()
@@ -1507,7 +1743,7 @@ onMounted(async () => {
   window.__intervalId = setInterval(tick, 16)
   // 自动昼夜循环
   window.__dayCycle = setInterval(() => { sunHour.value = (sunHour.value + 0.15) % 24; applySun() }, 3000)
-  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, wpos, sunHour, get attacking() { return attacking }, get hlPrimitive() { return hlPrimitive } }
+  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, biomeAt, isPlant, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, wpos, sunHour, get attacking() { return attacking }, get hlPrimitive() { return hlPrimitive } }
   window.__Cesium = Cesium
   } catch(e) { window.__mountErr = String(e.stack || e.message || e); console.error('[Engine] mount error:', e) }
 })
