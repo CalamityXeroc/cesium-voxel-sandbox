@@ -401,22 +401,24 @@ function itemIcon(key) {
   let url = iconCache.get(key)
   if (url) return url
   const it = ITEM_BY_KEY[key]
-  const S = 64, cv = document.createElement('canvas')
+  const S = 128, cv = document.createElement('canvas')   // 高分辨率源图, CSS 缩小时平滑滤波, 任意 DPR/缩放下不产生锯齿
   cv.width = cv.height = S
   const g = cv.getContext('2d')
-  g.imageSmoothingEnabled = false
+  g.imageSmoothingEnabled = true
   if (!it || it.kind === 'item') {
     // 光球: 径向渐变圆
     const rg = g.createRadialGradient(S * 0.38, S * 0.34, 2, S * 0.5, S * 0.5, S * 0.46)
     rg.addColorStop(0, '#fffdf0'); rg.addColorStop(0.45, '#ffd75e'); rg.addColorStop(1, '#d9821a')
     g.fillStyle = rg; g.beginPath(); g.arc(S / 2, S / 2, S * 0.44, 0, 6.3); g.fill()
   } else if (isPlant(it.id)) {
-    // 植物: 平面立绘(MC 里草丛/花也是平面图标)
+    // 植物: 平面立绘(MC 里草丛/花也是平面图标); 像素风放大用最近邻
     const [x, y] = iconTileRect(BLOCK_TEX[it.id])
-    g.drawImage(atlasCanvas, x, y, TILE, TILE, 3, 3, S - 6, S - 6)
+    g.imageSmoothingEnabled = false
+    g.drawImage(atlasCanvas, x, y, TILE, TILE, 6, 6, S - 12, S - 12)
+    g.imageSmoothingEnabled = true
   } else {
     // 等轴测: 顶面菱形(2:1) + 左右侧面, 亮度 1.0 / 0.78 / 0.56
-    const w = 30, hh = 15, H = 26, cx = S / 2, cy = 18
+    const w = 60, hh = 30, H = 52, cx = S / 2, cy = 36
     const [sx, sy] = iconTileRect(BLOCK_TEX[it.id])
     const [tx, ty] = iconTileRect(LOG_IDS.includes(it.id) ? LOG_TOP_TEX : BLOCK_TEX[it.id])
     const face = (a, b, c, d, e, f, x, y, bright) => {
@@ -1981,7 +1983,7 @@ function setNeon(v) {
 .slot { width: 48px; height: 48px; border-radius: 4px; cursor: pointer; border: 2px solid rgba(255,255,255,0.3); position: relative; background: rgba(0,0,0,0.32); display: flex; align-items: center; justify-content: center; }
 .slot.empty { background: rgba(255,255,255,0.06); }
 .slot.active { border-color: #fff; transform: scale(1.12); box-shadow: 0 0 10px rgba(255,255,255,0.5); }
-.slot img, .islot img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; pointer-events: none; }
+.slot img, .islot img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .slotNum { position: absolute; top: 1px; left: 3px; font-size: 10px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 700; }
 
 /* 背包面板 */
@@ -1994,9 +1996,9 @@ function setNeon(v) {
 .inv-close:hover { background: rgba(255,255,255,0.18); }
 .inv-label { font-size: 11px; color: #9fb6d8; margin: 8px 0 4px; }
 .inv-tip { font-size: 10px; color: rgba(255,255,255,0.35); margin-left: 8px; }
-.inv-grid { display: grid; grid-template-columns: repeat(9, 42px); gap: 3px; }
-.inv-row { display: grid; grid-template-columns: repeat(10, 42px); gap: 3px; }
-.islot { width: 42px; height: 42px; border-radius: 3px; background: rgba(255,255,255,0.06); border: 2px solid rgba(255,255,255,0.14); display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; }
+.inv-grid { display: grid; grid-template-columns: repeat(9, 48px); gap: 3px; }
+.inv-row { display: grid; grid-template-columns: repeat(10, 48px); gap: 3px; }
+.islot { width: 48px; height: 48px; border-radius: 3px; background: rgba(255,255,255,0.06); border: 2px solid rgba(255,255,255,0.14); display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; }
 .islot:hover, .islot.hover { border-color: #8fb0ff; background: rgba(120,160,255,0.18); }
 .islot.active { border-color: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.45); }
 .islotNum { position: absolute; top: 0; left: 3px; font-size: 9px; color: rgba(255,255,255,0.5); }
