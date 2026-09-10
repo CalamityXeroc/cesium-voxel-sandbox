@@ -1,7 +1,7 @@
 <template>
   <div class="engine-root">
     <div ref="mountRef" class="mount"></div>
-    <div class="crosshair" :class="{ locked: pointerLocked }"></div>
+    <div class="crosshair" v-if="!invOpen" :class="{ locked: pointerLocked }"></div>
 
     <!-- 顶栏 -->
     <div class="topbar">
@@ -11,11 +11,44 @@
 
     <!-- 底部热键栏 -->
     <div class="hotbar">
-      <div v-for="(b, i) in blockTypes" :key="b.key"
-        class="slot" :class="{ active: i === selectedSlot }"
-        @click="selectedSlot = i"
-        :style="{ background: b.color }">
-        <span class="slotNum">{{ i + 1 }}</span>
+      <div v-for="(k, i) in hotbar" :key="i"
+        class="slot" :class="{ active: i === selectedSlot, empty: !k }"
+        :title="itemName(k)"
+        @click="selectedSlot = i">
+        <img v-if="k" :src="itemIcon(k)" draggable="false" alt="" />
+        <span class="slotNum">{{ i === 9 ? 0 : i + 1 }}</span>
+      </div>
+    </div>
+
+    <!-- 背包(按 E 开关, 甲布局: 上半=全部物品无限源, 下半=快捷栏) -->
+    <div v-if="invOpen" class="inv-overlay" @pointerdown.self="closeInv()">
+      <div class="inv-panel">
+        <div class="inv-head">
+          <span class="inv-title">物品栏</span>
+          <span class="inv-sub">选择物品放入快捷栏 · 全部物品无限取用</span>
+          <button class="inv-close" @click="closeInv()">✕</button>
+        </div>
+        <div class="inv-label">背包</div>
+        <div class="inv-grid">
+          <div v-for="(k, i) in backpack" :key="k"
+            class="islot" :class="{ hover: isHover('bag', i) }" :title="itemName(k)"
+            @mouseenter="hoverSlot = { zone: 'bag', index: i }" @mouseleave="hoverSlot = null"
+            @click="pickFromBackpack(k)">
+            <img :src="itemIcon(k)" draggable="false" alt="" />
+          </div>
+        </div>
+        <div class="inv-label">快捷栏<span class="inv-tip">点击选中 · 悬停按数字键 1-0 摆放</span></div>
+        <div class="inv-row">
+          <div v-for="(k, i) in hotbar" :key="'h' + i"
+            class="islot hot" :class="{ active: i === selectedSlot, hover: isHover('hot', i), empty: !k }"
+            :title="itemName(k) || '空'"
+            @mouseenter="hoverSlot = { zone: 'hot', index: i }" @mouseleave="hoverSlot = null"
+            @click="selectedSlot = i">
+            <img v-if="k" :src="itemIcon(k)" draggable="false" alt="" />
+            <span class="islotNum">{{ i === 9 ? 0 : i + 1 }}</span>
+          </div>
+        </div>
+        <div class="inv-hint"><b>左键</b> 背包物品放入选中格 · <b>数字键</b> 悬停摆放/对调 · <b>E / ESC</b> 关闭</div>
       </div>
     </div>
 
@@ -26,6 +59,7 @@
       <div><b>左键</b> 破坏(可连挖)</div>
       <div><b>右键</b> 放置</div>
       <div><b>1-0</b> 选物品</div>
+      <div><b>E</b> 背包</div>
       <div><b>滚轮</b> 切换</div>
       <div><b>点击画面</b> 锁定鼠标</div>
       <div><b>ESC</b> 释放鼠标</div>
@@ -327,21 +361,79 @@ function faceTexFor(id, faceIdx, biome) {
   return BLOCK_TEX[id]
 }
 
-const blockTypes = [
-  { key: 'grass', color: '#7c9c4c', name: '草地' },
-  { key: 'dirt', color: '#8b6914', name: '泥土' },
-  { key: 'stone', color: '#7a7a7a', name: '石头' },
-  { key: 'plank', color: '#bc9862', name: '木板' },
-  { key: 'glass', color: 'rgba(180,220,255,0.6)', name: '玻璃' },
-  { key: 'log', color: '#6b4a2f', name: '原木' },
-  { key: 'leaf', color: '#2f7a35', name: '树叶' },
-  { key: 'sand', color: '#e3d6a3', name: '沙子' },
-  { key: 'glow', color: '#f0c060', name: '萤石' },
-  { key: 'ball', color: '#ffe16b', name: '光球' },
+/* ============ 物品注册表 / 快捷栏 / 背包 ============ */
+// 全部可获取物品:20 种方块 + 光球(非方块). 背包是无限源, 槽位只存 key
+const ITEMS = [
+  { key: 'grass', id: B.GRASS, name: '草方块' },
+  { key: 'dirt', id: B.DIRT, name: '泥土' },
+  { key: 'stone', id: B.STONE, name: '石头' },
+  { key: 'sand', id: B.SAND, name: '沙子' },
+  { key: 'sandstone', id: B.SANDSTONE, name: '沙岩' },
+  { key: 'plank', id: B.PLANK, name: '木板' },
+  { key: 'brick', id: B.BRICK, name: '砖块' },
+  { key: 'glass', id: B.GLASS, name: '玻璃' },
+  { key: 'snow', id: B.SNOW, name: '雪块' },
+  { key: 'log', id: B.LOG, name: '橡木原木' },
+  { key: 'log_pine', id: B.LOG_PINE, name: '松木原木' },
+  { key: 'log_birch', id: B.LOG_BIRCH, name: '白桦原木' },
+  { key: 'leaf', id: B.LEAF, name: '橡木树叶' },
+  { key: 'leaf_pine', id: B.LEAF_PINE, name: '松木树叶' },
+  { key: 'leaf_birch', id: B.LEAF_BIRCH, name: '白桦树叶' },
+  { key: 'cactus', id: B.CACTUS, name: '仙人掌' },
+  { key: 'plant_grass', id: B.PLANT_GRASS, name: '草丛' },
+  { key: 'flower_red', id: B.FLOWER_RED, name: '红花' },
+  { key: 'flower_yellow', id: B.FLOWER_YELLOW, name: '黄花' },
+  { key: 'glow', id: B.GLOW, name: '萤石' },
+  { key: 'ball', kind: 'item', name: '光球' },
 ]
-const blockIdByKey = { grass: B.GRASS, dirt: B.DIRT, stone: B.STONE, plank: B.PLANK, brick: B.BRICK, glass: B.GLASS, log: B.LOG, leaf: B.LEAF, sand: B.SAND, snow: B.SNOW, glow: B.GLOW }
-const BALL_SLOT = blockTypes.findIndex(b => b.key === 'ball')
-function currentBlockId() { return blockIdByKey[blockTypes[selectedSlot.value].key] || 0 }
+const ITEM_BY_KEY = Object.fromEntries(ITEMS.map(it => [it.key, it]))
+const HOTBAR_N = 10
+const hotbar = ref(['grass', 'dirt', 'stone', 'plank', 'glass', 'log', 'leaf', 'sand', 'glow', 'ball'])
+const backpack = ref(ITEMS.map(it => it.key))
+const invOpen = ref(false)
+const hoverSlot = ref(null)      // {zone:'bag'|'hot', index} 数字键摆放/对调的目标
+function currentItem() { return ITEM_BY_KEY[hotbar.value[selectedSlot.value]] || null }
+
+/* ============ 物品图标: 从图集即时绘制等轴测立方体 ============ */
+const iconCache = new Map()
+function iconTileRect(ti) { return [(ti % TILES_PER_ROW) * TILE, Math.floor(ti / TILES_PER_ROW) * TILE] }
+function itemIcon(key) {
+  let url = iconCache.get(key)
+  if (url) return url
+  const it = ITEM_BY_KEY[key]
+  const S = 64, cv = document.createElement('canvas')
+  cv.width = cv.height = S
+  const g = cv.getContext('2d')
+  g.imageSmoothingEnabled = false
+  if (!it || it.kind === 'item') {
+    // 光球: 径向渐变圆
+    const rg = g.createRadialGradient(S * 0.38, S * 0.34, 2, S * 0.5, S * 0.5, S * 0.46)
+    rg.addColorStop(0, '#fffdf0'); rg.addColorStop(0.45, '#ffd75e'); rg.addColorStop(1, '#d9821a')
+    g.fillStyle = rg; g.beginPath(); g.arc(S / 2, S / 2, S * 0.44, 0, 6.3); g.fill()
+  } else if (isPlant(it.id)) {
+    // 植物: 平面立绘(MC 里草丛/花也是平面图标)
+    const [x, y] = iconTileRect(BLOCK_TEX[it.id])
+    g.drawImage(atlasCanvas, x, y, TILE, TILE, 3, 3, S - 6, S - 6)
+  } else {
+    // 等轴测: 顶面菱形(2:1) + 左右侧面, 亮度 1.0 / 0.78 / 0.56
+    const w = 30, hh = 15, H = 26, cx = S / 2, cy = 18
+    const [sx, sy] = iconTileRect(BLOCK_TEX[it.id])
+    const [tx, ty] = iconTileRect(LOG_IDS.includes(it.id) ? LOG_TOP_TEX : BLOCK_TEX[it.id])
+    const face = (a, b, c, d, e, f, x, y, bright) => {
+      g.setTransform(a, b, c, d, e, f)
+      if (bright !== 1) g.filter = `brightness(${bright})`
+      g.drawImage(atlasCanvas, x, y, TILE, TILE, 0, 0, 1, 1)
+      g.filter = 'none'
+    }
+    face(w, hh, 0, H, cx - w, cy, sx, sy, 0.78)      // 左面
+    face(w, -hh, 0, H, cx, cy + hh, sx, sy, 0.56)    // 右面
+    face(w, hh, -w, hh, cx, cy - hh, tx, ty, 1)      // 顶面
+    g.setTransform(1, 0, 0, 1, 0, 0)
+  }
+  url = cv.toDataURL()
+  iconCache.set(key, url)
+  return url
+}
 
 /* ============ 本地世界坐标 ============ */
 const ORIGIN = Cesium.Cartesian3.fromDegrees(116.3983, 39.9135)
@@ -1307,6 +1399,11 @@ function attackStop() { attacking = false; attackCooldown = 0 }
 // 每帧:更新高亮框位置 + 按住左键连续破坏
 function updateInteraction(dt) {
   if (!viewer || !hlPrimitive) return
+  if (invOpen.value) {          // 背包打开: 停止交互并隐藏选中框
+    if (attacking) attackStop()
+    updateHighlight(null)
+    return
+  }
   const ray = raycastVoxel(MAX_REACH)
   updateHighlight(ray ? ray.hit : null)
   if (!attacking) return
@@ -1417,7 +1514,9 @@ function destroyBlock() {   // 立即破坏准星指向的方块(调试/兼容)
 }
 function placeAtClick() {
   if (!viewer) return
-  if (selectedSlot.value === BALL_SLOT) { throwBall(); return } // 光球格: 右键扔球
+  const item = currentItem()
+  if (item && item.kind === 'item') { throwBall(); return } // 光球: 右键扔球
+  if (!item) return                                        // 空手: 不放置
   const ray = raycastVoxel(MAX_REACH)
   if (!ray || !ray.place) return
   const [x, y, z] = ray.place
@@ -1425,7 +1524,7 @@ function placeAtClick() {
   const dstId = voxelAt(x, y, z)
   if (dstId && !isPlant(dstId)) return   // 植物可被直接替换
   if (playerIntersectsVoxel(x, y, z)) return // 不能把方块放进自己身体
-  placeBlockVoxel(x, y, z, currentBlockId())
+  placeBlockVoxel(x, y, z, item.id)
 }
 
 /* ============ 物理 ============ */
@@ -1512,13 +1611,55 @@ function onPointerLockChange() {
 function onPointerLockError() {
   console.warn('[Engine] 指针锁定失败，使用鼠标位置瞄准模式')
 }
+
+/* ============ 背包界面 ============ */
+function itemName(k) { return (ITEM_BY_KEY[k] && ITEM_BY_KEY[k].name) || '' }
+function isHover(zone, i) { const h = hoverSlot.value; return !!h && h.zone === zone && h.index === i }
+function pickFromBackpack(k) { hotbar.value[selectedSlot.value] = k }   // 点背包物品 → 放入当前选中格
+function openInv() {
+  if (invOpen.value || !viewer) return
+  invOpen.value = true
+  attackStop(); keys.clear()
+  updateHighlight(null)
+  if (document.pointerLockElement) document.exitPointerLock()   // 放开鼠标才能点面板
+}
+function closeInv() {
+  if (!invOpen.value) return
+  invOpen.value = false
+  hoverSlot.value = null
+  requestLock()   // E/ESC/点击都算用户手势, 可立即重新锁定
+}
+// 数字键: 悬停背包格 → 放入对应快捷栏格; 悬停快捷栏格 → 与之对调(MC 创造模式行为)
+function hotbarKeyInto(n) {
+  const h = hoverSlot.value
+  if (!h || n < 0 || n >= HOTBAR_N) return
+  const src = h.zone === 'bag' ? backpack.value[h.index] : hotbar.value[h.index]
+  if (!src) return
+  const old = hotbar.value[n]
+  hotbar.value[n] = src
+  if (h.zone === 'hot') hotbar.value[h.index] = old || null
+}
+// 数字键 → 快捷栏序号(1-9, 0 → 第 10 格)
+function digitSlot(code) {
+  if (code >= 'Digit1' && code <= 'Digit9') return parseInt(code[5]) - 1
+  if (code === 'Digit0' && HOTBAR_N >= 10) return 9
+  return -1
+}
 function onKeyDown(e) {
+  if (e.code === 'KeyE' && !e.repeat) { invOpen.value ? closeInv() : openInv(); return }
+  if (invOpen.value) {
+    // 背包打开: 只处理关闭与数字键, 其余按键(含移动)全部屏蔽
+    if (e.code === 'Escape') { closeInv(); return }
+    const n = digitSlot(e.code)
+    if (n >= 0) hotbarKeyInto(n)
+    return
+  }
   if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault()
   keys.add(e.code)
   if (e.code === 'KeyC') toggleCam()
   if (e.code === 'KeyH') toggleUI()
-  if (e.code >= 'Digit1' && e.code <= 'Digit9') selectedSlot.value = parseInt(e.code[5]) - 1
-  if (e.code === 'Digit0' && blockTypes.length >= 10) selectedSlot.value = 9
+  const n = digitSlot(e.code)
+  if (n >= 0) selectedSlot.value = n
   // 双击空格切换飞行(创造模式)
   if (e.code === 'Space' && !e.repeat) {
     const now = performance.now()
@@ -1528,6 +1669,7 @@ function onKeyDown(e) {
 }
 function onKeyUp(e) { keys.delete(e.code) }
 function onMouseMove(e) {
+  if (invOpen.value) return   // 背包打开: 冻结视角
   if (viewer && document.pointerLockElement === viewer.canvas) {
     // 指针锁定:准星(屏幕中心)即瞄准点
     player.yaw = (player.yaw + e.movementX * 0.0042) % (Math.PI * 2)
@@ -1543,7 +1685,8 @@ function onMouseMove(e) {
   }
 }
 function onWheel(e) {
-  const N = blockTypes.length
+  if (invOpen.value) return   // 背包打开: 不切格
+  const N = HOTBAR_N
   if (e.deltaY > 0) selectedSlot.value = (selectedSlot.value + 1) % N
   else selectedSlot.value = (selectedSlot.value + N - 1) % N
 }
@@ -1554,11 +1697,12 @@ function requestLock() {
   }
 }
 function onPointerDown(e) {
-  if (!viewer || e.target !== viewer.canvas) return // 只响应画布本身
+  if (!viewer || invOpen.value || e.target !== viewer.canvas) return // 只响应画布本身(背包打开时不交互)
   e.preventDefault()
   ensureAudio() // 用户手势后启用音频
   requestLock()
-  if (selectedSlot.value === BALL_SLOT) { throwBall(); return }
+  const item = currentItem()
+  if (item && item.kind === 'item') { throwBall(); return } // 光球: 左/右键都是扔球
   if (e.button === 0) attackStart()
   else if (e.button === 2) placeAtClick()
 }
@@ -1567,7 +1711,7 @@ function onPointerUp(e) {
 }
 function onCanvasClick(e) {
   // 兜底:pointerdown 时的锁定请求可能被浏览器推迟到鼠标释放后
-  if (!viewer || e.target !== viewer.canvas) return
+  if (!viewer || invOpen.value || e.target !== viewer.canvas) return
   requestLock()
 }
 function onCanvasContext(e) {
@@ -1743,7 +1887,8 @@ onMounted(async () => {
   window.__intervalId = setInterval(tick, 16)
   // 自动昼夜循环
   window.__dayCycle = setInterval(() => { sunHour.value = (sunHour.value + 0.15) % 24; applySun() }, 3000)
-  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, biomeAt, isPlant, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, wpos, sunHour, get attacking() { return attacking }, get hlPrimitive() { return hlPrimitive } }
+  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, attackStart, attackStop, settleColumn, flying, groundYAt, surfaceYAt, caveAt, biomeAt, isPlant, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, debrisTex, wpos, sunHour, get attacking() { return attacking }, get hlPrimitive() { return hlPrimitive },
+    inv: { ITEMS, ITEM_BY_KEY, HOTBAR_N, hotbar, backpack, invOpen, hoverSlot, selectedSlot, currentItem, itemIcon, itemName, openInv, closeInv, pickFromBackpack, hotbarKeyInto, isHover, digitSlot } }
   window.__Cesium = Cesium
   } catch(e) { window.__mountErr = String(e.stack || e.message || e); console.error('[Engine] mount error:', e) }
 })
@@ -1833,9 +1978,30 @@ function setNeon(v) {
 
 /* 热键栏 */
 .hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; z-index: 10; background: rgba(0,0,0,0.5); padding: 6px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.2); }
-.slot { width: 48px; height: 48px; border-radius: 4px; cursor: pointer; border: 2px solid rgba(255,255,255,0.3); position: relative; image-rendering: pixelated; }
+.slot { width: 48px; height: 48px; border-radius: 4px; cursor: pointer; border: 2px solid rgba(255,255,255,0.3); position: relative; background: rgba(0,0,0,0.32); display: flex; align-items: center; justify-content: center; }
+.slot.empty { background: rgba(255,255,255,0.06); }
 .slot.active { border-color: #fff; transform: scale(1.12); box-shadow: 0 0 10px rgba(255,255,255,0.5); }
+.slot img, .islot img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; pointer-events: none; }
 .slotNum { position: absolute; top: 1px; left: 3px; font-size: 10px; color: #fff; text-shadow: 0 0 3px #000; font-weight: 700; }
+
+/* 背包面板 */
+.inv-overlay { position: absolute; inset: 0; z-index: 30; background: rgba(6,10,18,0.5); display: flex; align-items: center; justify-content: center; }
+.inv-panel { width: max-content; max-width: 96vw; background: rgba(16,21,34,0.96); border: 2px solid rgba(120,150,230,0.28); border-radius: 10px; padding: 12px 14px 10px; box-shadow: 0 16px 48px rgba(0,0,0,0.6); }
+.inv-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.inv-title { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: 1px; }
+.inv-sub { font-size: 10px; color: rgba(255,255,255,0.4); }
+.inv-close { margin-left: auto; background: rgba(255,255,255,0.08); border: none; color: #cfe0ff; font-size: 12px; border-radius: 6px; cursor: pointer; padding: 2px 8px; }
+.inv-close:hover { background: rgba(255,255,255,0.18); }
+.inv-label { font-size: 11px; color: #9fb6d8; margin: 8px 0 4px; }
+.inv-tip { font-size: 10px; color: rgba(255,255,255,0.35); margin-left: 8px; }
+.inv-grid { display: grid; grid-template-columns: repeat(9, 42px); gap: 3px; }
+.inv-row { display: grid; grid-template-columns: repeat(10, 42px); gap: 3px; }
+.islot { width: 42px; height: 42px; border-radius: 3px; background: rgba(255,255,255,0.06); border: 2px solid rgba(255,255,255,0.14); display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; }
+.islot:hover, .islot.hover { border-color: #8fb0ff; background: rgba(120,160,255,0.18); }
+.islot.active { border-color: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.45); }
+.islotNum { position: absolute; top: 0; left: 3px; font-size: 9px; color: rgba(255,255,255,0.5); }
+.inv-hint { font-size: 10px; color: rgba(255,255,255,0.45); margin-top: 9px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); }
+.inv-hint b { color: #aad0ff; }
 
 .help { position: absolute; left: 12px; bottom: 12px; display: grid; grid-template-columns: repeat(3, auto); gap: 2px 12px; z-index: 10; font-size: 11px; color: rgba(255,255,255,0.7); background: rgba(10,14,24,0.5); padding: 6px 10px; border-radius: 8px; }
 .help b { color: #aad0ff; }
