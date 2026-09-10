@@ -11,11 +11,9 @@
 <body>
   <div id="app"></div>
   <script>
-    // Cesium 运行时资产路径: 本地开发用 dev server 的 /cesium, 线上部署在 /voxel/cesium
-    window.CESIUM_BASE_URL =
-      (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-        ? '/cesium'
-        : '/voxel/cesium';
+    // Cesium 运行时资产由 scripts/copy-cesium-assets.mjs 复制到页面同级的 cesium/ 目录
+    // (兼容部署到任意目录或子目录)
+    window.CESIUM_BASE_URL = location.pathname.replace(/[^/]*$/, '') + 'cesium/';
   </script>
   <script type="module" src="/src/main.js"></script>
 </body>

@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
   plugins: [vue()],
-  // 相对路径产物: 可部署到任意子目录(线上为个人网站的 /voxel/)
+  // 相对路径产物: 可部署到任意目录或子目录
   base: './',
   server: {
     port: 3100,
