@@ -23,7 +23,7 @@
     <div class="help">
       <div><b>W A S D</b> 移动</div>
       <div><b>空格</b> 跳跃</div>
-      <div><b>左键</b> 破坏</div>
+      <div><b>左键</b> 挖掘</div>
       <div><b>右键</b> 放置</div>
       <div><b>1-9</b> 选物品</div>
       <div><b>滚轮</b> 切换</div>
@@ -288,7 +288,7 @@ const WORLD_HALF = 128                          // 世界 256×256 (±128)
 const chunks = new Map()                       // chunkKey -> Uint8Array(16*48*16)
 const chunkTop = new Map()                     // chunkKey -> 最高实心体素 y(加速查询/网格化)
 const chunkPrimitives = new Map()              // chunkKey -> { opaque, glass }
-const chunkKeyOf = (cx, cz) => cx + ',' + cz
+const chunkKeyOf = (cx, cz) => (cx + 512) * 1024 + (cz + 512)   // 数值 key: AO 采样量大时比字符串快得多
 
 function voxelIndex(lx, y, lz) { return (y * VOX_W + lx) * VOX_D + lz }
 function voxelAt(x, y, z) {
@@ -411,11 +411,33 @@ function faceUVs(ti) {
   return [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
 }
 
+// 顶点环境光遮蔽(AO):采样面外侧的 side1/side2/corner 三个邻居(MC 风格)
+const AO_LEVELS = [0.5, 0.68, 0.84, 1.0]
+function aoSolidAt(x, y, z) { return isOpaque(voxelAt(x, y, z)) ? 1 : 0 }
+function vertexAO(vx, vy, vz, f, ci) {
+  const c = f.corners[ci]
+  const vc = [c[0], c[2], c[1]]              // ENU 角点 → 体素空间(x=E, y=U, z=N)
+  const n = f.dir
+  const axis = n[0] !== 0 ? 0 : (n[1] !== 0 ? 1 : 2)   // 法线轴
+  const a = axis === 0 ? 1 : 0                          // 切向轴 u
+  const b = axis === 2 ? 1 : 2                          // 切向轴 v
+  const su = vc[a] === 1 ? 1 : -1
+  const sv = vc[b] === 1 ? 1 : -1
+  const px = vx + n[0], py = vy + n[1], pz = vz + n[2]  // 面外侧基准
+  const ua = a === 0 ? su : 0, ub = a === 1 ? su : 0, uc = a === 2 ? su : 0
+  const va = b === 0 ? sv : 0, vb = b === 1 ? sv : 0, vcz = b === 2 ? sv : 0
+  const s1 = aoSolidAt(px + ua, py + ub, pz + uc)
+  const s2 = aoSolidAt(px + va, py + vb, pz + vcz)
+  const cc = aoSolidAt(px + ua + va, py + ub + vb, pz + uc + vcz)
+  if (s1 && s2) return AO_LEVELS[0]                     // 两边都堵 → 最暗
+  return AO_LEVELS[3 - (s1 + s2 + cc)]
+}
+
 // 构建 chunk 的两个 geometry:不透明 + 玻璃(半透明)
 function buildChunkGeometries(cx, cz) {
   const ox = cx * VOX_W, oz = cz * VOX_D
-  const opaque = { pos: [], nor: [], uv: [], idx: [] }
-  const glass = { pos: [], nor: [], uv: [], idx: [] }   // 半透明层(玻璃 + 水)
+  const opaque = { pos: [], nor: [], uv: [], ao: [], idx: [] }
+  const glass = { pos: [], nor: [], uv: [], ao: [], idx: [] }   // 半透明层(玻璃)
   const arr = chunks.get(chunkKeyOf(cx, cz))
   if (!arr) return null
   const topY = Math.min(VOX_H - 1, chunkTop.get(chunkKeyOf(cx, cz)) ?? VOX_H - 1)
@@ -440,6 +462,7 @@ function buildChunkGeometries(cx, cz) {
         target.pos.push(wx + c[0], wz + c[1], wy + c[2])   // 体素(x=east,y=up,z=north) → ENU(E,N,U)
         target.nor.push(f.n[0], f.n[1], f.n[2])
         target.uv.push(uvs[ci][0], uvs[ci][1])
+        target.ao.push(vertexAO(wx, wy, wz, f, ci))
       }
       target.idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
     }
@@ -451,6 +474,7 @@ function buildChunkGeometries(cx, cz) {
         position: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.DOUBLE, componentsPerAttribute: 3, values: d.pos }),
         normal: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.FLOAT, componentsPerAttribute: 3, values: d.nor }),
         st: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.FLOAT, componentsPerAttribute: 2, values: d.uv }),
+        ao: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.FLOAT, componentsPerAttribute: 1, values: new Float32Array(d.ao) }),
       },
       indices: new Uint32Array(d.idx),
       primitiveType: Cesium.PrimitiveType.TRIANGLES,
@@ -476,11 +500,13 @@ in vec3 position3DHigh;
 in vec3 position3DLow;
 in vec3 normal;
 in vec2 st;
+in float ao;
 in float batchId;
 
 out vec3 v_positionEC;
 out vec3 v_normalEC;
 out vec2 v_st;
+out float v_ao;
 
 void main()
 {
@@ -488,6 +514,7 @@ void main()
     v_positionEC = (czm_modelViewRelativeToEye * p).xyz;
     v_normalEC = czm_normal * normal;
     v_st = st;
+    v_ao = ao;
     gl_Position = czm_modelViewProjectionRelativeToEye * p;
 }
 `
@@ -495,6 +522,7 @@ const VOXEL_FS = `
 in vec3 v_positionEC;
 in vec3 v_normalEC;
 in vec2 v_st;
+in float v_ao;
 
 uniform vec3 u_lp0; uniform vec3 u_lc0;
 uniform vec3 u_lp1; uniform vec3 u_lc1;
@@ -540,6 +568,8 @@ void main()
     color += albedo * pointLight(u_lp5, u_lc5, normalEC, v_positionEC);
     color += albedo * pointLight(u_lp6, u_lc6, normalEC, v_positionEC);
     color += albedo * pointLight(u_lp7, u_lc7, normalEC, v_positionEC);
+
+    color *= v_ao;   // 环境光遮蔽(顶点插值)
 
     out_FragColor = vec4(color, material.alpha);
 }
@@ -871,6 +901,86 @@ function removeGlowHalo(x, y, z) {
   }
 }
 
+/* ============ 选中高亮 & 破坏进度 ============ */
+let highlightEntity = null, crackEntity = null
+let breakAlpha = 0
+let breaking = null            // {x,y,z,t} 正在破坏的方块
+const BREAK_TIME = 0.4         // 破坏耗时(秒)
+
+// 程序化裂纹纹理(黑线,透明背景)
+function makeCrackTex() {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64
+  const g = cv.getContext('2d')
+  g.clearRect(0, 0, 64, 64)
+  g.strokeStyle = 'rgba(0,0,0,0.9)'; g.lineCap = 'round'
+  let seed = 12
+  const rnd = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647 }
+  for (let i = 0; i < 5; i++) {
+    let x = 8 + rnd() * 48, y = 8 + rnd() * 48
+    g.beginPath(); g.lineWidth = 1 + rnd() * 1.2; g.moveTo(x, y)
+    for (let s = 0; s < 4; s++) { x += (rnd() - 0.5) * 26; y += (rnd() - 0.5) * 26; g.lineTo(x, y) }
+    g.stroke()
+  }
+  return cv
+}
+
+function initInteractionVisuals() {
+  highlightEntity = viewer.entities.add({
+    show: false,
+    box: {
+      dimensions: new Cesium.Cartesian3(1.002, 1.002, 1.002),
+      fill: false, outline: true,
+      outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
+    },
+  })
+  crackEntity = viewer.entities.add({
+    show: false,
+    box: {
+      dimensions: new Cesium.Cartesian3(1.004, 1.004, 1.004),
+      material: new Cesium.ImageMaterialProperty({
+        image: makeCrackTex(),
+        transparent: true,
+        color: new Cesium.CallbackProperty(() => Cesium.Color.WHITE.withAlpha(breakAlpha), false),
+      }),
+    },
+  })
+}
+function startBreaking() {
+  const ray = raycastVoxel(MAX_REACH)
+  if (!ray) return
+  breaking = { x: ray.hit[0], y: ray.hit[1], z: ray.hit[2], t: 0 }
+}
+function stopBreaking() {
+  breaking = null; breakAlpha = 0
+  if (crackEntity) crackEntity.show = false
+}
+// 每帧:更新高亮框位置与破坏进度
+function updateInteraction(dt) {
+  if (!viewer || !highlightEntity) return
+  const ray = raycastVoxel(MAX_REACH)
+  if (ray) {
+    highlightEntity.show = true
+    highlightEntity.position = wpos(ray.hit[0] + 0.5, ray.hit[1] + 0.5, ray.hit[2] + 0.5)
+  } else {
+    highlightEntity.show = false
+  }
+  if (!breaking) return
+  // 准星离开原方块 → 进度重置
+  if (!ray || ray.hit[0] !== breaking.x || ray.hit[1] !== breaking.y || ray.hit[2] !== breaking.z) {
+    stopBreaking(); return
+  }
+  breaking.t += dt
+  if (breaking.t >= BREAK_TIME) {
+    const { x, y, z } = breaking
+    stopBreaking()
+    destroyBlockAt(x, y, z)
+    return
+  }
+  breakAlpha = breaking.t / BREAK_TIME
+  crackEntity.show = true
+  crackEntity.position = wpos(breaking.x + 0.5, breaking.y + 0.5, breaking.z + 0.5)
+}
+
 const MAX_REACH = 5.5
 function placeBlockVoxel(x, y, z, id) {
   if (!setVoxelRaw(x, y, z, id)) return
@@ -880,18 +990,21 @@ function placeBlockVoxel(x, y, z, id) {
   rebuildChunkAt(x, z)
   if (id === B.SAND) { settleColumn(x, z, y); rebuildChunkAt(x, z) }
 }
-function destroyBlock() {
-  if (!viewer) return
-  const ray = raycastVoxel(MAX_REACH)
-  if (!ray) return
-  const [x, y, z] = ray.hit
+function destroyBlockAt(x, y, z) {
   const oldId = voxelAt(x, y, z)
+  if (!oldId) return
   if (!setVoxelRaw(x, y, z, AIR)) return
   sfxBreak()
   if (oldId === B.GLOW) removeGlowHalo(x, y, z)
   rebuildChunkAt(x, z)
   // 上方沙子落下
   settleColumn(x, z, y + 1); rebuildChunkAt(x, z)
+}
+function destroyBlock() {   // 立即破坏准星指向的方块(调试/兼容)
+  if (!viewer) return
+  const ray = raycastVoxel(MAX_REACH)
+  if (!ray) return
+  destroyBlockAt(ray.hit[0], ray.hit[1], ray.hit[2])
 }
 function placeAtClick() {
   if (!viewer) return
@@ -964,7 +1077,7 @@ function tick() {
   const now = performance.now()
   const dt = Math.min(0.05, (now - lastTick) / 1000 || 0.016)
   lastTick = now
-  updatePlayer(dt); updateBalls(dt); updateCamera(); updateClouds(dt); updateLightUniforms()
+  updatePlayer(dt); updateBalls(dt); updateCamera(); updateClouds(dt); updateLightUniforms(); updateInteraction(dt)
   frameCount++
   if (!fpsWindow) { fpsWindow = now; lastHudT = now }
   if (now - fpsWindow >= 500) {
@@ -1023,34 +1136,23 @@ function onWheel(e) {
   if (e.deltaY > 0) selectedSlot.value = (selectedSlot.value + 1) % N
   else selectedSlot.value = (selectedSlot.value + N - 1) % N
 }
-let lastAct = 0
-function oncePerClick() {
-  const now = performance.now()
-  if (now - lastAct < 250) return false // 防止 click+contextmenu 双触发
-  lastAct = now
-  return true
-}
-function onCanvasClick(e) {
-  if (!viewer || e.target !== viewer.canvas) return // 只响应画布本身的点击
+function onMouseDown(e) {
+  if (!viewer || e.target !== viewer.canvas) return // 只响应画布本身
   e.preventDefault()
   ensureAudio() // 用户手势后启用音频
-  const locked = document.pointerLockElement === viewer.canvas
-  if (!locked) {
-    try { viewer.canvas.requestPointerLock() } catch(err) {}
-    if (selectedSlot.value === BALL_SLOT) { if (oncePerClick()) throwBall(); return }
-    if (e.button === 0) { if (oncePerClick()) destroyBlock() }
-    else if (e.button === 2) { if (oncePerClick()) placeAtClick() }
-    return
+  if (document.pointerLockElement !== viewer.canvas) {
+    try { viewer.canvas.requestPointerLock() } catch (err) {}
   }
-  // 锁定中：浏览器可能把右键以 click(button=2) 派发
-  if (selectedSlot.value === BALL_SLOT) { if (oncePerClick()) throwBall(); return }
-  if (e.button === 2) { if (oncePerClick()) placeAtClick() }
-  else if (e.button === 0) { if (oncePerClick()) destroyBlock() }
+  if (selectedSlot.value === BALL_SLOT) { throwBall(); return }
+  if (e.button === 0) startBreaking()
+  else if (e.button === 2) placeAtClick()
+}
+function onMouseUp(e) {
+  if (e.button === 0) stopBreaking()
 }
 function onCanvasContext(e) {
   if (!viewer || e.target !== viewer.canvas) return
   e.preventDefault()
-  if (oncePerClick()) placeAtClick()
 }
 
 /* ============ 控制 ============ */
@@ -1209,10 +1311,10 @@ onMounted(async () => {
   // 先注册操控事件(就算后续场景出错也能操作)
   window.addEventListener('keydown', onKeyDown); window.addEventListener('keyup', onKeyUp)
   window.addEventListener('mousemove', onMouseMove); window.addEventListener('wheel', onWheel)
-  window.addEventListener('click', onCanvasClick); window.addEventListener('contextmenu', onCanvasContext)
+  window.addEventListener('mousedown', onMouseDown); window.addEventListener('mouseup', onMouseUp); window.addEventListener('contextmenu', onCanvasContext)
   document.addEventListener('pointerlockchange', onPointerLockChange)
   document.addEventListener('pointerlockerror', onPointerLockError)
-  buildCharacter(); setCamMode(camMode.value); buildWorld(); initChunkRendering(); buildAllChunks(); buildCelestial(); buildClouds()
+  buildCharacter(); setCamMode(camMode.value); initInteractionVisuals(); buildWorld(); initChunkRendering(); buildAllChunks(); buildCelestial(); buildClouds()
   // 出生点:放到地表(否则初始 y 会埋在基岩附近的地底)
   player.x = 0; player.z = 0; player.y = voxelGroundY(0, 0) + 0.2; player.vy = 0; player.yaw = -1.5 // 朝西(开阔谷地)
   applySun() // 初始化光照与天空颜色(与 sunHour 一致)
@@ -1221,7 +1323,7 @@ onMounted(async () => {
   window.__intervalId = setInterval(tick, 16)
   // 自动昼夜循环
   window.__dayCycle = setInterval(() => { sunHour.value = (sunHour.value + 0.15) % 24; applySun() }, 3000)
-  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel }
+  window.__engine = { viewer, player, tickCount: 0, voxelAt, setVoxelRaw, rebuildChunkAt, voxelGroundY, raycastVoxel, chunks, placeBlockVoxel, destroyBlock, destroyBlockAt, startBreaking, stopBreaking, settleColumn, flying, groundYAt, surfaceYAt, caveAt, glowLights, lightUniformSets, updateLightUniforms, ecefToVoxel, buildChunkGeometries, get breaking() { return breaking }, get breakAlpha() { return breakAlpha } }
   window.__Cesium = Cesium
   } catch(e) { window.__mountErr = String(e.stack || e.message || e); console.error('[Engine] mount error:', e) }
 })
@@ -1235,7 +1337,7 @@ onBeforeUnmount(() => {
   if (document.pointerLockElement) document.exitPointerLock()
   window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('wheel', onWheel)
-  window.removeEventListener('click', onCanvasClick); window.removeEventListener('contextmenu', onCanvasContext)
+  window.removeEventListener('mousedown', onMouseDown); window.removeEventListener('mouseup', onMouseUp); window.removeEventListener('contextmenu', onCanvasContext)
   if (viewer && viewer.destroy) viewer.destroy(); viewer = null
 })
 
