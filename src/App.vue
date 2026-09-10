@@ -415,15 +415,27 @@ function itemIcon(key) {
     const [x, y] = iconTileRect(BLOCK_TEX[it.id])
     g.drawImage(atlasCanvas, x, y, TILE, TILE, 3, 3, S - 6, S - 6)
   } else {
-    // 等轴测: 顶面菱形(2:1) + 左右侧面, 亮度 1.0 / 0.78 / 0.56
-    const w = 30, hh = 15, H = 26, cx = S / 2, cy = 18
+    // 等轴测立方体(MC 标准视角: 俯角 30° / 方位角 45°)
+    // 棱长 s: 总宽 = √2·s, 顶面菱形高 = √2·s·sin30°(即 2:1), 侧棱竖直投影 = s·cos30°
+    // → 侧棱高 ≈ 顶面菱形全高 × 1.225; 之前 H 取 26(应为 36.7)相当于把立方体垂直压扁 29%, 看起来是扁的
+    const s = 39
+    const w = s * Math.SQRT1_2        // 半宽 27.6
+    const hh = w / 2                  // 顶面菱形半高 13.8
+    const H = s * 0.8660254           // 侧棱竖直高度 33.8
+    const cx = S / 2
+    const cy = (S - (2 * hh + H)) / 2 + hh   // 垂直居中
     const [sx, sy] = iconTileRect(BLOCK_TEX[it.id])
     const [tx, ty] = iconTileRect(LOG_IDS.includes(it.id) ? LOG_TOP_TEX : BLOCK_TEX[it.id])
     const face = (a, b, c, d, e, f, x, y, bright) => {
       g.setTransform(a, b, c, d, e, f)
-      if (bright !== 1) g.filter = `brightness(${bright})`
       g.drawImage(atlasCanvas, x, y, TILE, TILE, 0, 0, 1, 1)
-      g.filter = 'none'
+      if (bright !== 1) {
+        // 手动暗化(等效 brightness 滤镜, 不依赖 ctx.filter, 各浏览器表现一致)
+        g.globalCompositeOperation = 'source-atop'
+        g.fillStyle = 'rgba(0,0,0,' + (1 - bright).toFixed(3) + ')'
+        g.fillRect(0, 0, 1, 1)
+        g.globalCompositeOperation = 'source-over'
+      }
     }
     face(w, hh, 0, H, cx - w, cy, sx, sy, 0.78)      // 左面
     face(w, -hh, 0, H, cx, cy + hh, sx, sy, 0.56)    // 右面
